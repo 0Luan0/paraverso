@@ -3,6 +3,13 @@ import {
   db, getCadernos, criarCaderno, criarNotaVazia,
   salvarNota, deletarNota, getNotasPorCaderno
 } from '../../db/index'
+
+async function deletarCadernoDB(id, nome) {
+  // deleta todas as notas do caderno e depois o caderno
+  const notas = await getNotasPorCaderno(nome)
+  for (const n of notas) await deletarNota(n.id)
+  await db.cadernos.delete(id)
+}
 import { NotesSidebar } from './NotesSidebar'
 import { NoteEditor } from './NoteEditor'
 
@@ -47,6 +54,19 @@ export function NotasTab() {
     setNotaAtiva(null)
   }
 
+  async function deletarCaderno(id, nome) {
+    if (!confirm(`Remover o caderno "${nome}" e todas as suas notas?`)) return
+    await deletarCadernoDB(id, nome)
+    const lista = await getCadernos()
+    setCadernos(lista)
+    if (lista.length > 0) {
+      setCadernoAtivo(lista[0].nome)
+    } else {
+      setCadernoAtivo('')
+      setNotaAtiva(null)
+    }
+  }
+
   async function deletar(id) {
     await deletarNota(id)
     const lista = await getNotasPorCaderno(cadernoAtivo)
@@ -89,6 +109,7 @@ export function NotasTab() {
         setNotaSelecionada={trocarNota}
         onNovaNota={novaNota}
         onNovoCaderno={novoCaderno}
+        onDeletarCaderno={deletarCaderno}
         onDeletarNota={deletar}
       />
 

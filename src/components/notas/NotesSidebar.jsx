@@ -9,6 +9,7 @@ export function NotesSidebar({
   setNotaSelecionada,
   onNovaNota,
   onNovoCaderno,
+  onDeletarCaderno,
   onDeletarNota,
 }) {
   const [novoCadernoMode, setNovoCadernoMode] = useState(false)
@@ -45,17 +46,28 @@ export function NotesSidebar({
 
         <div className="space-y-0.5">
           {cadernos.map(c => (
-            <button
+            <div
               key={c.id}
-              onClick={() => { setCaderno(c.nome); setNotaSelecionada(null) }}
-              className={`w-full text-left text-sm px-2 py-1 rounded-md transition-colors ${
-                caderno === c.nome
-                  ? 'bg-accent/10 dark:bg-accent-dark/10 text-accent dark:text-accent-dark'
-                  : 'text-ink-2 dark:text-ink-dark2 hover:bg-bg-2 dark:hover:bg-bg-dark2'
-              }`}
+              className="group/cad flex items-center rounded-md"
             >
-              {c.nome}
-            </button>
+              <button
+                onClick={() => { setCaderno(c.nome); setNotaSelecionada(null) }}
+                className={`flex-1 text-left text-sm px-2 py-1 rounded-md transition-colors ${
+                  caderno === c.nome
+                    ? 'bg-accent/10 dark:bg-accent-dark/10 text-accent dark:text-accent-dark'
+                    : 'text-ink-2 dark:text-ink-dark2 hover:bg-bg-2 dark:hover:bg-bg-dark2'
+                }`}
+              >
+                {c.nome}
+              </button>
+              <button
+                onClick={() => onDeletarCaderno(c.id, c.nome)}
+                className="opacity-0 group-hover/cad:opacity-100 text-xs text-ink-3 dark:text-ink-dark3 hover:text-red-500 transition-all px-1 flex-shrink-0"
+                title="Remover caderno"
+              >
+                ✕
+              </button>
+            </div>
           ))}
         </div>
 

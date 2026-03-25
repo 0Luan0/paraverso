@@ -3,7 +3,7 @@ import { useState } from 'react'
 export function MetasMes({ mesObj, onUpdate }) {
   const [novaCategoria, setNovaCategoria] = useState('')
   const [addingCat, setAddingCat] = useState(false)
-  const [novoItem, setNovoItem] = useState({}) // catId -> texto
+  const [novoItem, setNovoItem] = useState({})
 
   function toggleItem(catId, itemIdx) {
     const metas = mesObj.metas.map(cat => {
@@ -45,6 +45,7 @@ export function MetasMes({ mesObj, onUpdate }) {
   }
 
   function deletarCategoria(catId) {
+    if (!confirm('Remover esta categoria e todas as suas metas?')) return
     onUpdate({ ...mesObj, metas: mesObj.metas.filter(c => c.id !== catId) })
   }
 
@@ -63,7 +64,8 @@ export function MetasMes({ mesObj, onUpdate }) {
       {mesObj.metas.map(cat => {
         const feitos = cat.itens.filter(i => i.feito).length
         return (
-          <div key={cat.id} className="space-y-1.5">
+          <div key={cat.id} className="space-y-1.5 group/cat">
+            {/* cabeçalho da categoria */}
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-ink-2 dark:text-ink-dark2 uppercase tracking-wide">
                 {cat.categoria}
@@ -72,7 +74,7 @@ export function MetasMes({ mesObj, onUpdate }) {
                 <span className="text-xs text-ink-3 dark:text-ink-dark3">{feitos}/{cat.itens.length}</span>
                 <button
                   onClick={() => deletarCategoria(cat.id)}
-                  className="text-xs text-ink-3 dark:text-ink-dark3 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                  className="text-xs text-ink-3 dark:text-ink-dark3 hover:text-red-500 transition-colors"
                   title="Remover categoria"
                 >
                   ✕
@@ -80,6 +82,7 @@ export function MetasMes({ mesObj, onUpdate }) {
               </div>
             </div>
 
+            {/* itens */}
             <div className="space-y-1">
               {cat.itens.map((item, itemIdx) => (
                 <div key={item.id} className="flex items-start gap-2 group/item">
@@ -98,15 +101,14 @@ export function MetasMes({ mesObj, onUpdate }) {
                     )}
                   </button>
                   <span className={`text-sm leading-snug flex-1 ${
-                    item.feito
-                      ? 'line-through text-ink-3 dark:text-ink-dark3'
-                      : 'text-ink dark:text-ink-dark'
+                    item.feito ? 'line-through text-ink-3 dark:text-ink-dark3' : 'text-ink dark:text-ink-dark'
                   }`}>
                     {item.texto}
                   </span>
                   <button
                     onClick={() => deletarItem(cat.id, itemIdx)}
                     className="text-xs text-ink-3 dark:text-ink-dark3 hover:text-red-500 opacity-0 group-hover/item:opacity-100 transition-all flex-shrink-0"
+                    title="Remover meta"
                   >
                     ✕
                   </button>
@@ -114,7 +116,7 @@ export function MetasMes({ mesObj, onUpdate }) {
               ))}
             </div>
 
-            {/* add item */}
+            {/* campo add item */}
             <div className="flex gap-1 mt-1">
               <input
                 value={novoItem[cat.id] || ''}
