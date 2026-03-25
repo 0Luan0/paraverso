@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family: Inter, system-ui, sans-serif;
+    background-color: #F2EDE4;
+    color: #1A1A18;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body.dark {
+    background-color: #1A1812;
+    color: #EDE8DF;
+  }
+
+  #root {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+@layer components {
+  /* Scrollbar sutil */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #C8BFA8;
+    border-radius: 4px;
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background: #3A3428;
+  }
+
+  /* TipTap editor */
+  .tiptap {
+    outline: none;
+    min-height: 200px;
+  }
+  .tiptap p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    color: #8A8478;
+    pointer-events: none;
+    float: left;
+    height: 0;
+  }
+  .dark .tiptap p.is-editor-empty:first-child::before {
+    color: #706860;
+  }
+  .tiptap blockquote {
+    border-left: 3px solid #C17A3A;
+    padding-left: 1rem;
+    margin-left: 0;
+    color: #4A4840;
+    font-style: italic;
+  }
+  .dark .tiptap blockquote {
+    border-left-color: #D4924A;
+    color: #B8B0A0;
+  }
+  .tiptap ul li, .tiptap ol li {
+    margin-left: 1.2rem;
+  }
+  .tiptap ul[data-type="taskList"] {
+    list-style: none;
+    margin-left: 0;
+  }
+  .tiptap ul[data-type="taskList"] li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin-left: 0;
+  }
+  .tiptap ul[data-type="taskList"] li input[type="checkbox"] {
+    margin-top: 4px;
+    accent-color: #C17A3A;
+    cursor: pointer;
+  }
+  .tiptap h1 { font-family: Georgia, serif; font-size: 1.8rem; font-weight: 500; margin-bottom: 0.5rem; }
+  .tiptap h2 { font-family: Georgia, serif; font-size: 1.4rem; font-weight: 500; margin-bottom: 0.4rem; }
+  .tiptap h3 { font-family: Georgia, serif; font-size: 1.1rem; font-weight: 500; margin-bottom: 0.3rem; }
+  .tiptap p { margin-bottom: 0.75rem; line-height: 1.65; }
+  .tiptap strong { font-weight: 600; }
+}
