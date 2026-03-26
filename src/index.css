@@ -30,52 +30,31 @@
 }
 
 /* ── Texturas de fundo (pontilhado / quadriculado) ──
-   Aplicadas só no wrapper do editor — sidebar e topbar não são afetados.
-   O div recebe a classe e usa ::before como camada decorativa atrás do conteúdo. */
-
-.editor-texture-dots,
-.editor-texture-grid {
-  position: relative;
-}
-.editor-texture-dots::before,
-.editor-texture-grid::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-}
-/* conteúdo sempre acima da textura */
-.editor-texture-dots > *,
-.editor-texture-grid > * {
-  position: relative;
-  z-index: 1;
-}
+   Aplicadas direto no background-image do wrapper do editor.
+   Assim a textura repete junto com o scroll — sem pseudo-elemento fixo. */
 
 /* Pontilhado — dot grid estilo caderno */
-.editor-texture-dots::before {
-  background-image: radial-gradient(circle, #8B7A5E 1.2px, transparent 1.2px);
+.editor-texture-dots {
+  background-image: radial-gradient(circle, rgba(139,122,94,0.28) 1.2px, transparent 1.2px);
   background-size: 22px 22px;
-  opacity: 0.22;
 }
-.dark .editor-texture-dots::before {
-  background-image: radial-gradient(circle, #A89880 1.2px, transparent 1.2px);
-  opacity: 0.15;
+.dark .editor-texture-dots {
+  background-image: radial-gradient(circle, rgba(168,152,128,0.18) 1.2px, transparent 1.2px);
+  background-size: 22px 22px;
 }
 
 /* Quadriculado — escala ~28px igual ao Claude, linhas finas */
-.editor-texture-grid::before {
+.editor-texture-grid {
   background-image:
-    linear-gradient(#8B7A5E 1px, transparent 1px),
-    linear-gradient(90deg, #8B7A5E 1px, transparent 1px);
+    linear-gradient(rgba(139,122,94,0.18) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(139,122,94,0.18) 1px, transparent 1px);
   background-size: 28px 28px;
-  opacity: 0.15;
 }
-.dark .editor-texture-grid::before {
+.dark .editor-texture-grid {
   background-image:
-    linear-gradient(#A89880 1px, transparent 1px),
-    linear-gradient(90deg, #A89880 1px, transparent 1px);
-  opacity: 0.10;
+    linear-gradient(rgba(168,152,128,0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(168,152,128,0.12) 1px, transparent 1px);
+  background-size: 28px 28px;
 }
 
 @layer components {
