@@ -30,42 +30,52 @@
 }
 
 /* ── Texturas de fundo (pontilhado / quadriculado) ──
-   Aplicadas no html via classe, usando pseudo-elemento ::before
-   para não interferir com o conteúdo. Opacidade bem sutil. */
+   Aplicadas só no wrapper do editor — sidebar e topbar não são afetados.
+   O div recebe a classe e usa ::before como camada decorativa atrás do conteúdo. */
 
-.texture-dots::before,
-.texture-grid::before {
+.editor-texture-dots,
+.editor-texture-grid {
+  position: relative;
+}
+.editor-texture-dots::before,
+.editor-texture-grid::before {
   content: '';
-  position: fixed;
+  position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 0;
 }
+/* conteúdo sempre acima da textura */
+.editor-texture-dots > *,
+.editor-texture-grid > * {
+  position: relative;
+  z-index: 1;
+}
 
 /* Pontilhado — dot grid estilo caderno */
-.texture-dots::before {
-  background-image: radial-gradient(circle, #8B7A5E 1px, transparent 1px);
+.editor-texture-dots::before {
+  background-image: radial-gradient(circle, #8B7A5E 1.2px, transparent 1.2px);
   background-size: 22px 22px;
-  opacity: 0.18;
+  opacity: 0.22;
 }
-.dark.texture-dots::before {
-  background-image: radial-gradient(circle, #A89880 1px, transparent 1px);
-  opacity: 0.12;
+.dark .editor-texture-dots::before {
+  background-image: radial-gradient(circle, #A89880 1.2px, transparent 1.2px);
+  opacity: 0.15;
 }
 
-/* Quadriculado — grid estilo papel milimetrado */
-.texture-grid::before {
+/* Quadriculado — escala ~28px igual ao Claude, linhas finas */
+.editor-texture-grid::before {
   background-image:
     linear-gradient(#8B7A5E 1px, transparent 1px),
     linear-gradient(90deg, #8B7A5E 1px, transparent 1px);
-  background-size: 22px 22px;
-  opacity: 0.13;
+  background-size: 28px 28px;
+  opacity: 0.15;
 }
-.dark.texture-grid::before {
+.dark .editor-texture-grid::before {
   background-image:
     linear-gradient(#A89880 1px, transparent 1px),
     linear-gradient(90deg, #A89880 1px, transparent 1px);
-  opacity: 0.09;
+  opacity: 0.10;
 }
 
 @layer components {

@@ -7,7 +7,13 @@ import TaskItem from '@tiptap/extension-task-item'
 import { WikiLink } from './WikiLinkExtension'
 import { Hashtag } from './HashtagExtension'
 
-export function NoteEditor({ nota, onTituloChange, onConteudoChange, onWikiLinkClick }) {
+const TEXTURA_CLASS = {
+  dots: 'editor-texture-dots',
+  grid: 'editor-texture-grid',
+  none: '',
+}
+
+export function NoteEditor({ nota, textura = 'none', onTituloChange, onConteudoChange, onWikiLinkClick }) {
   const saveTimer = useRef(null)
 
   useEffect(() => {
@@ -121,7 +127,7 @@ export function NoteEditor({ nota, onTituloChange, onConteudoChange, onWikiLinkC
       )}
 
       {/* editor */}
-      <div className="flex-1 overflow-auto px-8 py-4">
+      <div className={`flex-1 overflow-auto px-8 py-4 ${TEXTURA_CLASS[textura] || ''}`}>
         <EditorContent editor={editor} />
       </div>
     </div>

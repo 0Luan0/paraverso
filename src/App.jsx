@@ -20,7 +20,7 @@ function App() {
 
       <div className="flex-1 flex overflow-hidden">
         {aba === 'mes' && <MesTab />}
-        {aba === 'notas' && <NotasTab />}
+        {aba === 'notas' && <NotasTab textura={textura} />}
         {aba === 'graph' && <GraphTab />}
         {aba === 'busca' && <BuscaTab />}
       </div>

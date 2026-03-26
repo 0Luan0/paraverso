@@ -12,7 +12,7 @@ async function deletarCadernoDB(id, nome) {
   await db.cadernos.delete(id)
 }
 
-export function NotasTab() {
+export function NotasTab({ textura = 'none' }) {
   const [cadernos, setCadernos] = useState([])
   const [cadernoAtivo, setCadernoAtivo] = useState('Pensamentos')
   const [notas, setNotas] = useState([])
@@ -139,6 +139,7 @@ export function NotasTab() {
         {notaAtiva ? (
           <NoteEditor
             nota={notaAtiva}
+            textura={textura}
             onTituloChange={titulo => atualizarNotaAtiva({ titulo })}
             onConteudoChange={conteudo => atualizarNotaAtiva({ conteudo })}
             onWikiLinkClick={handleWikiLinkClick}
