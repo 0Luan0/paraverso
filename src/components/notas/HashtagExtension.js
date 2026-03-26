@@ -1,8 +1,8 @@
-import { Node, mergeAttributes } from '@tiptap/core'
+import { Node, mergeAttributes, nodeInputRule } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 
 // Extensão de #hashtags estilo Obsidian
-// Digitar #filosofia e pressionar espaço converte em tag
+// Digitar #filosofia e pressionar espaço converte em chip de tag
 export const Hashtag = Node.create({
   name: 'hashtag',
   group: 'inline',
@@ -35,24 +35,15 @@ export const Hashtag = Node.create({
     ]
   },
 
-  // Converte #texto quando o usuário pressiona espaço ou enter após o tag
+  // nodeInputRule: API canônica TipTap v3 para nós inline atômicos
+  // Dispara quando o usuário digita #palavra seguido de espaço
   addInputRules() {
-    const { type } = this
     return [
-      {
-        find: /#([\w\u00C0-\u017F]+)(\s)$/,
-        handler: ({ state, range, match }) => {
-          const tag = match[1]
-          if (!tag) return null
-          const { tr } = state
-          // substitui o #tag + espaço pelo nó + espaço
-          tr.replaceWith(range.from, range.to, [
-            type.create({ tag }),
-            state.schema.text(' '),
-          ])
-          return tr
-        },
-      },
+      nodeInputRule({
+        find: /#([\w\u00C0-\u017F]+)\s$/,
+        type: this.type,
+        getAttributes: match => ({ tag: match[1] }),
+      }),
     ]
   },
 
