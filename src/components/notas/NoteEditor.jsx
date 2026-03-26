@@ -1,18 +1,28 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
-import { salvarNota } from '../../db/index'
+import { WikiLink } from './WikiLinkExtension'
 
-export function NoteEditor({ nota, onTituloChange, onConteudoChange }) {
+export function NoteEditor({ nota, onTituloChange, onConteudoChange, onWikiLinkClick }) {
   const saveTimer = useRef(null)
+
+  // escuta cliques em wikilinks e repassa para o componente pai
+  useEffect(() => {
+    function handleWikiLink(e) {
+      onWikiLinkClick?.(e.detail.titulo)
+    }
+    window.addEventListener('paraverso:wikilink', handleWikiLink)
+    return () => window.removeEventListener('paraverso:wikilink', handleWikiLink)
+  }, [onWikiLinkClick])
 
   const editor = useEditor({
     extensions: [
       StarterKit,
       Placeholder.configure({
-        placeholder: 'Escreva algo...',
+        placeholder: 'Escreva algo... Use [[Nome]] para linkar outra nota.',
       }),
+      WikiLink,
     ],
     content: nota.conteudo || '',
     editorProps: {
@@ -21,23 +31,21 @@ export function NoteEditor({ nota, onTituloChange, onConteudoChange }) {
       },
     },
     onUpdate: ({ editor }) => {
-      const json = editor.getJSON()
-      onConteudoChange(json)
+      onConteudoChange(editor.getJSON())
     },
   })
 
-  // Atualizar conteúdo quando nota muda
+  // Atualizar conteúdo quando muda de nota
   useEffect(() => {
-    if (editor && nota.conteudo) {
+    if (!editor) return
+    if (nota.conteudo) {
       const atual = JSON.stringify(editor.getJSON())
       const novo = JSON.stringify(nota.conteudo)
-      if (atual !== novo) {
-        editor.commands.setContent(nota.conteudo, false)
-      }
-    } else if (editor && !nota.conteudo) {
+      if (atual !== novo) editor.commands.setContent(nota.conteudo, false)
+    } else {
       editor.commands.setContent('', false)
     }
-  }, [nota.id]) // só quando muda de nota
+  }, [nota.id])
 
   if (!nota) return null
 
@@ -54,7 +62,7 @@ export function NoteEditor({ nota, onTituloChange, onConteudoChange }) {
         />
       </div>
 
-      {/* toolbar simples */}
+      {/* toolbar */}
       {editor && (
         <div className="flex items-center gap-1 px-8 py-1.5 border-b border-bdr-2 dark:border-bdr-dark2 flex-shrink-0">
           {[
@@ -78,6 +86,11 @@ export function NoteEditor({ nota, onTituloChange, onConteudoChange }) {
               {btn.label}
             </button>
           ))}
+
+          {/* dica de wikilink */}
+          <span className="ml-auto text-xs text-ink-3/50 dark:text-ink-dark3/50 font-normal">
+            [[Nome]] para linkar nota
+          </span>
         </div>
       )}
 

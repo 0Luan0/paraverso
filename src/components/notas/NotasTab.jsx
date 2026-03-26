@@ -1,17 +1,16 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   db, getCadernos, criarCaderno, criarNotaVazia,
   salvarNota, deletarNota, getNotasPorCaderno
 } from '../../db/index'
+import { NotesSidebar } from './NotesSidebar'
+import { NoteEditor } from './NoteEditor'
 
 async function deletarCadernoDB(id, nome) {
-  // deleta todas as notas do caderno e depois o caderno
   const notas = await getNotasPorCaderno(nome)
   for (const n of notas) await deletarNota(n.id)
   await db.cadernos.delete(id)
 }
-import { NotesSidebar } from './NotesSidebar'
-import { NoteEditor } from './NoteEditor'
 
 export function NotasTab() {
   const [cadernos, setCadernos] = useState([])
@@ -20,7 +19,6 @@ export function NotasTab() {
   const [notaAtiva, setNotaAtiva] = useState(null)
   const saveTimer = useRef(null)
 
-  // Carregar cadernos
   useEffect(() => {
     getCadernos().then(lista => {
       setCadernos(lista)
@@ -28,7 +26,6 @@ export function NotasTab() {
     })
   }, [])
 
-  // Carregar notas quando muda caderno
   useEffect(() => {
     if (!cadernoAtivo) return
     getNotasPorCaderno(cadernoAtivo).then(lista => {
@@ -38,16 +35,18 @@ export function NotasTab() {
     })
   }, [cadernoAtivo])
 
-  async function novaNota() {
+  async function novaNota(tituloInicial) {
     const nota = criarNotaVazia(cadernoAtivo)
+    if (tituloInicial) nota.titulo = tituloInicial
     await salvarNota(nota)
     const lista = await getNotasPorCaderno(cadernoAtivo)
     setNotas(lista)
     setNotaAtiva(nota)
+    return nota
   }
 
   async function novoCaderno(nome) {
-    const c = await criarCaderno(nome)
+    await criarCaderno(nome)
     const lista = await getCadernos()
     setCadernos(lista)
     setCadernoAtivo(nome)
@@ -81,21 +80,44 @@ export function NotasTab() {
     const atualizada = { ...notaAtiva, ...campos }
     setNotaAtiva(atualizada)
     setNotas(prev => prev.map(n => n.id === atualizada.id ? atualizada : n))
-
-    // debounce save
     if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => {
-      salvarNota(atualizada)
-    }, 700)
+    saveTimer.current = setTimeout(() => salvarNota(atualizada), 700)
   }
 
   function trocarNota(nota) {
-    // salvar nota atual antes de trocar
     if (notaAtiva && saveTimer.current) {
       clearTimeout(saveTimer.current)
       salvarNota(notaAtiva)
     }
     setNotaAtiva(nota)
+  }
+
+  // Clique em [[wikilink]] — abre nota existente ou cria nova
+  async function handleWikiLinkClick(titulo) {
+    // salvar nota atual
+    if (notaAtiva && saveTimer.current) {
+      clearTimeout(saveTimer.current)
+      await salvarNota(notaAtiva)
+    }
+
+    // busca em TODOS os cadernos
+    const todasNotas = await db.notas.toArray()
+    const encontrada = todasNotas.find(
+      n => n.titulo.toLowerCase() === titulo.toLowerCase()
+    )
+
+    if (encontrada) {
+      // se está em outro caderno, muda o caderno ativo primeiro
+      if (encontrada.caderno !== cadernoAtivo) {
+        setCadernoAtivo(encontrada.caderno)
+        const lista = await getNotasPorCaderno(encontrada.caderno)
+        setNotas(lista)
+      }
+      setNotaAtiva(encontrada)
+    } else {
+      // cria nova nota com esse título no caderno ativo
+      await novaNota(titulo)
+    }
   }
 
   return (
@@ -107,25 +129,25 @@ export function NotasTab() {
         setCaderno={(c) => { setCadernoAtivo(c); setNotaAtiva(null) }}
         notaSelecionada={notaAtiva}
         setNotaSelecionada={trocarNota}
-        onNovaNota={novaNota}
+        onNovaNota={() => novaNota()}
         onNovoCaderno={novoCaderno}
         onDeletarCaderno={deletarCaderno}
         onDeletarNota={deletar}
       />
 
-      {/* área do editor */}
       <div className="flex-1 flex flex-col overflow-hidden bg-surface dark:bg-surface-dark">
         {notaAtiva ? (
           <NoteEditor
             nota={notaAtiva}
             onTituloChange={titulo => atualizarNotaAtiva({ titulo })}
             onConteudoChange={conteudo => atualizarNotaAtiva({ conteudo })}
+            onWikiLinkClick={handleWikiLinkClick}
           />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-3">
             <p className="text-ink-3 dark:text-ink-dark3 text-sm">Nenhuma nota selecionada</p>
             <button
-              onClick={novaNota}
+              onClick={() => novaNota()}
               className="text-sm text-accent dark:text-accent-dark border border-accent/30 dark:border-accent-dark/30 rounded-lg px-4 py-2 hover:bg-accent/5 dark:hover:bg-accent-dark/5 transition-colors"
             >
               + Nova nota

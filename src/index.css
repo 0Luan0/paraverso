@@ -90,6 +90,28 @@
     accent-color: #C17A3A;
     cursor: pointer;
   }
+  /* Wikilinks estilo Obsidian */
+  .wikilink {
+    --wikilink-color: #C17A3A;
+    --wikilink-bg: rgba(193, 122, 58, 0.08);
+    color: var(--wikilink-color);
+    background: var(--wikilink-bg);
+    border-radius: 3px;
+    padding: 0 3px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .wikilink:hover {
+    --wikilink-bg: rgba(193, 122, 58, 0.18);
+  }
+  .dark .wikilink {
+    --wikilink-color: #D4924A;
+    --wikilink-bg: rgba(212, 146, 74, 0.12);
+  }
+  .dark .wikilink:hover {
+    --wikilink-bg: rgba(212, 146, 74, 0.22);
+  }
+
   .tiptap h1 { font-family: Georgia, serif; font-size: 1.8rem; font-weight: 500; margin-bottom: 0.5rem; }
   .tiptap h2 { font-family: Georgia, serif; font-size: 1.4rem; font-weight: 500; margin-bottom: 0.4rem; }
   .tiptap h3 { font-family: Georgia, serif; font-size: 1.1rem; font-weight: 500; margin-bottom: 0.3rem; }
