@@ -38,7 +38,6 @@ export function RegistroDiario({ mesObj, hoje, onUpdate }) {
     onUpdate({ ...mesObj, dias })
   }
 
-  // Score do dia
   function scoreDia(dia) {
     const feitos = (dia.habitos || []).filter(h => h === 1).length
     const possiveis = (dia.habitos || []).filter(h => h !== 2).length
@@ -52,16 +51,56 @@ export function RegistroDiario({ mesObj, hoje, onUpdate }) {
         <table className="w-full border-collapse">
           <thead>
             <tr className="border-b border-bdr-2 dark:border-bdr-dark2">
-              <th className="text-left text-xs text-ink-3 dark:text-ink-dark3 font-normal px-4 py-2 w-12">Dia</th>
-              <th className="text-left text-xs text-ink-3 dark:text-ink-dark3 font-normal px-2 py-2">Memorável</th>
+              {/* Dia — sticky */}
+              <th
+                className="text-left text-xs text-ink-3 dark:text-ink-dark3 font-normal px-4 w-12 bg-bg dark:bg-bg-dark sticky top-0 z-10 border-b border-bdr-2 dark:border-bdr-dark2"
+                style={{ verticalAlign: 'bottom', paddingBottom: '8px' }}
+              >
+                Dia
+              </th>
+
+              {/* Memorável — sticky */}
+              <th
+                className="text-left text-xs text-ink-3 dark:text-ink-dark3 font-normal px-2 bg-bg dark:bg-bg-dark sticky top-0 z-10 border-b border-bdr-2 dark:border-bdr-dark2"
+                style={{ verticalAlign: 'bottom', paddingBottom: '8px' }}
+              >
+                Memorável
+              </th>
+
+              {/* Hábitos — nome na vertical, sticky */}
               {mesObj.habitos.map((h, i) => (
-                <th key={i} className="text-xs text-ink-3 dark:text-ink-dark3 font-normal px-1 py-2 w-8 text-center" title={h}>
-                  <span className="inline-block max-w-[28px] truncate text-center">{h[0]}</span>
+                <th
+                  key={i}
+                  className="text-xs text-ink-3 dark:text-ink-dark3 font-normal px-1 w-8 text-center bg-bg dark:bg-bg-dark sticky top-0 z-10 border-b border-bdr-2 dark:border-bdr-dark2"
+                  style={{ verticalAlign: 'bottom', paddingBottom: '6px' }}
+                  title={h}
+                >
+                  <span
+                    style={{
+                      writingMode: 'vertical-rl',
+                      transform: 'rotate(180deg)',
+                      display: 'inline-block',
+                      maxHeight: '80px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {h}
+                  </span>
                 </th>
               ))}
-              <th className="text-xs text-ink-3 dark:text-ink-dark3 font-normal px-2 py-2 w-10 text-right">%</th>
+
+              {/* % — sticky */}
+              <th
+                className="text-xs text-ink-3 dark:text-ink-dark3 font-normal px-2 w-10 text-right bg-bg dark:bg-bg-dark sticky top-0 z-10 border-b border-bdr-2 dark:border-bdr-dark2"
+                style={{ verticalAlign: 'bottom', paddingBottom: '8px' }}
+              >
+                %
+              </th>
             </tr>
           </thead>
+
           <tbody>
             {mesObj.dias.map((dia, diaIdx) => {
               const ehHoje = diasHoje === dia.n
@@ -84,7 +123,7 @@ export function RegistroDiario({ mesObj, hoje, onUpdate }) {
                     </div>
                   </td>
 
-                  {/* memo — campo inline */}
+                  {/* memo */}
                   <td className="px-2 py-1.5">
                     <div className="flex items-center gap-1">
                       <input
@@ -94,7 +133,6 @@ export function RegistroDiario({ mesObj, hoje, onUpdate }) {
                         placeholder={ehHoje ? 'O que ficou hoje?' : ''}
                         className="w-full bg-transparent text-sm text-ink dark:text-ink-dark placeholder-ink-3/50 dark:placeholder-ink-dark3/50 focus:outline-none border-b border-transparent focus:border-bdr dark:focus:border-bdr-dark transition-colors"
                       />
-                      {/* botão para abrir modal */}
                       <button
                         onClick={() => setModalDia(dia)}
                         className="opacity-0 group-hover:opacity-100 text-ink-3 dark:text-ink-dark3 hover:text-accent dark:hover:text-accent-dark transition-all text-xs ml-1 flex-shrink-0"
