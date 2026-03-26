@@ -85,24 +85,39 @@
   }
   .dark .tiptap blockquote { border-left-color: #D4924A; color: #B8B0A0; }
 
-  /* ── Listas ── */
-  .tiptap ul, .tiptap ol {
-    margin: 0.5rem 0 0.75rem 1.4rem;
+  /* ── Listas bullet e numerada ──
+     Tailwind Preflight zera list-style em todos ul/ol.
+     Usamos !important para garantir a sobrescrita dentro do editor. */
+  .tiptap ul:not([data-type="taskList"]) {
+    list-style-type: disc !important;
+    padding-left: 1.5rem !important;
+    margin: 0.4rem 0 0.75rem;
     line-height: 1.7;
   }
-  .tiptap ul { list-style-type: disc; }
-  .tiptap ol { list-style-type: decimal; }
-  .tiptap li { margin-bottom: 0.2rem; }
-  .tiptap li > p { margin-bottom: 0.2rem; }
+  .tiptap ol {
+    list-style-type: decimal !important;
+    padding-left: 1.5rem !important;
+    margin: 0.4rem 0 0.75rem;
+    line-height: 1.7;
+  }
+  .tiptap ul:not([data-type="taskList"]) li,
+  .tiptap ol li {
+    display: list-item !important;
+    margin-bottom: 0.2rem;
+  }
+  .tiptap ul:not([data-type="taskList"]) li > p,
+  .tiptap ol li > p { margin-bottom: 0.15rem; }
 
-  /* ── Checklist (- [ ] / - [/] / - [x]) ── */
+  /* ── Checklist (- [ ] → checkbox clicável) ──
+     Fluxo: digita "- " → cria bullet → digita "[ ] " → vira checklist
+     OU clica no botão ☐ da toolbar */
   .tiptap ul[data-type="taskList"] {
-    list-style: none;
-    margin-left: 0;
-    padding: 0;
+    list-style: none !important;
+    padding: 0 !important;
+    margin: 0.4rem 0 0.75rem;
   }
   .tiptap ul[data-type="taskList"] li {
-    display: flex;
+    display: flex !important;
     align-items: flex-start;
     gap: 0.55rem;
     margin-bottom: 0.3rem;
@@ -112,13 +127,13 @@
     align-items: center;
     flex-shrink: 0;
     margin-top: 3px;
+    cursor: pointer;
   }
   .tiptap ul[data-type="taskList"] li > label input[type="checkbox"] {
     width: 14px;
     height: 14px;
     accent-color: #C17A3A;
     cursor: pointer;
-    border-radius: 3px;
   }
   .tiptap ul[data-type="taskList"] li[data-checked="true"] > div {
     text-decoration: line-through;
