@@ -31,7 +31,7 @@ export const WikiLink = Node.create({
         class: 'wikilink',
         style: 'cursor:pointer; color: var(--wikilink-color, #C17A3A); background: var(--wikilink-bg, rgba(193,122,58,0.08)); border-radius: 3px; padding: 0 3px; font-style: normal; white-space: nowrap;',
       }),
-      `[[${node.attrs.titulo}]]`,
+      node.attrs.titulo,
     ]
   },
 

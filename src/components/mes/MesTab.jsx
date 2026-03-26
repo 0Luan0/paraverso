@@ -95,7 +95,7 @@ export function MesTab() {
                 onClick={() => { setAnoAtual(hoje.getFullYear()); setMesAtual(hoje.getMonth() + 1) }}
                 className="text-xs text-ink-3 dark:text-ink-dark3 hover:text-accent dark:hover:text-accent-dark px-1 transition-colors"
               >
-                Hoje
+                Mês
               </button>
               <button
                 onClick={() => navMes(1)}
