@@ -29,6 +29,45 @@
   }
 }
 
+/* ── Texturas de fundo (pontilhado / quadriculado) ──
+   Aplicadas no html via classe, usando pseudo-elemento ::before
+   para não interferir com o conteúdo. Opacidade bem sutil. */
+
+.texture-dots::before,
+.texture-grid::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Pontilhado — dot grid estilo caderno */
+.texture-dots::before {
+  background-image: radial-gradient(circle, #8B7A5E 1px, transparent 1px);
+  background-size: 22px 22px;
+  opacity: 0.18;
+}
+.dark.texture-dots::before {
+  background-image: radial-gradient(circle, #A89880 1px, transparent 1px);
+  opacity: 0.12;
+}
+
+/* Quadriculado — grid estilo papel milimetrado */
+.texture-grid::before {
+  background-image:
+    linear-gradient(#8B7A5E 1px, transparent 1px),
+    linear-gradient(90deg, #8B7A5E 1px, transparent 1px);
+  background-size: 22px 22px;
+  opacity: 0.13;
+}
+.dark.texture-grid::before {
+  background-image:
+    linear-gradient(#A89880 1px, transparent 1px),
+    linear-gradient(90deg, #A89880 1px, transparent 1px);
+  opacity: 0.09;
+}
+
 @layer components {
   /* ── Scrollbar sutil ── */
   ::-webkit-scrollbar { width: 4px; height: 4px; }
