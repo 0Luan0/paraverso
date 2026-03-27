@@ -55,6 +55,8 @@ export const Hashtag = Node.create({
           handleClick(view, pos, event) {
             const el = event.target.closest('[data-hashtag]')
             if (!el) return false
+            event.preventDefault()
+            event.stopPropagation()
             const tag = el.getAttribute('data-tag')
             if (tag) {
               window.dispatchEvent(new CustomEvent('paraverso:hashtag', { detail: { tag } }))
