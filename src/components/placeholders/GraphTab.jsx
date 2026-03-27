@@ -8,6 +8,8 @@ import {
   useEdgesState,
   MarkerType,
   Panel,
+  Handle,
+  Position,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { db } from '../../db/index'
@@ -65,6 +67,17 @@ function calcularPosicoes(notas) {
   return posicoes
 }
 
+// handle invisível no centro — necessário para o React Flow renderizar as arestas
+const handleStyle = {
+  opacity: 0,
+  width: 1,
+  height: 1,
+  minWidth: 1,
+  minHeight: 1,
+  border: 'none',
+  background: 'transparent',
+}
+
 // ── Nó customizado ──
 function NotaNode({ data, selected }) {
   const raio = 10 + Math.min((data.conexoes || 0) * 3, 20)
@@ -81,9 +94,13 @@ function NotaNode({ data, selected }) {
           : '0 2px 8px rgba(0,0,0,0.25)',
         cursor: 'pointer',
         transition: 'box-shadow 0.15s, border 0.15s',
+        position: 'relative',
       }}
       title={data.titulo}
-    />
+    >
+      <Handle type="target" position={Position.Top} style={handleStyle} />
+      <Handle type="source" position={Position.Bottom} style={handleStyle} />
+    </div>
   )
 }
 
