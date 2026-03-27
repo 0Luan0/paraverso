@@ -166,6 +166,7 @@ export function GraphTab({ dark }) {
 
       setEdges(arestas.map(a => ({
         ...a,
+        type: 'straight',
         style: { stroke: corAresta, strokeWidth: 1.5 },
         markerEnd: { type: MarkerType.ArrowClosed, width: 5, height: 5, color: corAresta },
       })))
