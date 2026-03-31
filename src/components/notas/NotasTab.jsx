@@ -6,7 +6,7 @@
  *   vez via getTodasNotasMetadata() (sem parsing de conteúdo). Wikilink click
  *   = lookup O(1), não scan de todos os arquivos.
  * - Navegação com histórico por aba (back/forward estilo browser).
- * - navKey: garante remount do NoteEditor a cada navegação → sem race condition.
+ * - navKey: garante remount do NoteEditorCM a cada navegação → sem race condition.
  * - Backlinks: calculados de forma lazy ao abrir cada nota.
  */
 
@@ -18,9 +18,8 @@ import {
 } from '../../db/index'
 import { useVault } from '../../contexts/VaultContext'
 import { NotesSidebar } from './NotesSidebar'
-import { NoteEditor } from './NoteEditor'
+import { NoteEditorCM } from './NoteEditorCM'
 import { TemplateModal } from './TemplateModal'
-import { markdownParaTipTapJson } from '../../lib/markdownUtils'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -58,7 +57,7 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
   const [tabs, setTabs]             = useState([novoTab('')])
   const [tabAtivaIdx, setTabAtivaIdx] = useState(0)
 
-  // navKey: incrementado a cada navegação → garante remount do NoteEditor
+  // navKey: incrementado a cada navegação → garante remount do editor
   const [navKey, setNavKey] = useState(0)
 
   const saveTimer     = useRef(null)
@@ -196,23 +195,19 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
   }
 
   function navigarPara(nota, caderno) {
+    if (!nota) return
     const targetCaderno = caderno ?? nota?.caderno ?? cadernoAtivo
     foiEditadaRef.current = false
+    notaAtivaRef.current = nota
     setNavKey(k => k + 1)
     mutarTab(tab => {
-      const history = [
-        ...tab.history.slice(0, tab.histIdx + 1),
-        { nota, caderno: targetCaderno },
-      ]
-      return { nota, caderno: targetCaderno, history, histIdx: history.length - 1 }
+      const novoHistory = [...tab.history.slice(0, tab.histIdx + 1), nota.id]
+      return { nota, caderno: targetCaderno, history: novoHistory, histIdx: novoHistory.length - 1 }
     })
   }
 
   function atualizarNotaNoTab(nota) {
-    mutarTab(tab => ({
-      nota,
-      history: tab.history.map((e, i) => i === tab.histIdx ? { ...e, nota } : e),
-    }))
+    mutarTab(() => ({ nota }))
   }
 
   // ── Notifica nota ativa para outros componentes (GraphTab) ──────────────────
@@ -236,26 +231,30 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
 
   // ── Back / Forward ──────────────────────────────────────────────────────────
 
-  async function goBack() {
-    if (!canGoBack) return
-    const entry = tabAtiva.history[tabAtiva.histIdx - 1]
-    if (entry.caderno !== cadernoAtivo) {
-      const lista = await getNotasPorCaderno(entry.caderno)
-      setNotas(lista)
-    }
+  function goBack() {
+    const tab = tabs[tabAtivaIdx]
+    if (!tab || tab.histIdx <= 0) return
+    const novoIdx = tab.histIdx - 1
+    const notaId = tab.history[novoIdx]
+    const nota = notas.find(n => n.id === notaId)
+    if (!nota) return
+    foiEditadaRef.current = false
+    notaAtivaRef.current = nota
     setNavKey(k => k + 1)
-    mutarTab(tab => ({ nota: entry.nota, caderno: entry.caderno, histIdx: tab.histIdx - 1 }))
+    setTabs(prev => prev.map((t, i) => i === tabAtivaIdx ? { ...t, nota, histIdx: novoIdx } : t))
   }
 
-  async function goForward() {
-    if (!canGoForward) return
-    const entry = tabAtiva.history[tabAtiva.histIdx + 1]
-    if (entry.caderno !== cadernoAtivo) {
-      const lista = await getNotasPorCaderno(entry.caderno)
-      setNotas(lista)
-    }
+  function goForward() {
+    const tab = tabs[tabAtivaIdx]
+    if (!tab || tab.histIdx >= tab.history.length - 1) return
+    const novoIdx = tab.histIdx + 1
+    const notaId = tab.history[novoIdx]
+    const nota = notas.find(n => n.id === notaId)
+    if (!nota) return
+    foiEditadaRef.current = false
+    notaAtivaRef.current = nota
     setNavKey(k => k + 1)
-    mutarTab(tab => ({ nota: entry.nota, caderno: entry.caderno, histIdx: tab.histIdx + 1 }))
+    setTabs(prev => prev.map((t, i) => i === tabAtivaIdx ? { ...t, nota, histIdx: novoIdx } : t))
   }
 
   // ── Tab management ──────────────────────────────────────────────────────────
@@ -320,7 +319,7 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
         mutarTab(tab => {
           if (tab.nota || lista.length === 0) return {}
           const nota    = lista[0]
-          const history = [{ nota, caderno: cadernoAtivo }]
+          const history = [nota.id]
           return { nota, history, histIdx: 0 }
         })
       })
@@ -376,9 +375,9 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
     const base = notaAtivaRef.current || notaAtiva
     if (!base) return
     const atualizada = { ...base, ...campos }
-    // Se o conteúdo foi editado (novo TipTap JSON), descarta _rawMarkdown
-    // para que o próximo save use tiptapJsonParaMarkdown em vez do original.
-    if (campos.conteudo && typeof campos.conteudo === 'object') {
+    // CodeMirror: _rawMarkdown É o conteúdo — nunca deletar.
+    // Legado TipTap: se conteudo é objeto JSON, deleta _rawMarkdown.
+    if (campos.conteudo && typeof campos.conteudo === 'object' && campos.conteudo?.type === 'doc') {
       delete atualizada._rawMarkdown
       foiEditadaRef.current = true
     }
@@ -410,6 +409,7 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
   }
 
   function trocarNota(nota) {
+    if (nota.id === notaAtiva?.id) return // já está aberta
     if (saveTimer.current) {
       clearTimeout(saveTimer.current)
       const anterior = notaAtivaRef.current || notaAtiva
@@ -488,6 +488,12 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
     }
 
     // 5. Não existe → cria nova nota com esse título
+    // Flush save pendente antes de criar nova nota
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current)
+      saveTimer.current = null
+      try { await salvarNota(notaAtivaRef.current) } catch {}
+    }
     await novaNota(titulo)
   }
 
@@ -506,10 +512,7 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
 
   function inserirTemplate(markdownPuro) {
     if (!editorRef.current) return
-    const json = markdownParaTipTapJson(markdownPuro)
-    if (!json?.content?.length) return
-    const editor = editorRef.current
-    editor.chain().focus().setTextSelection(editor.state.doc.content.size).insertContent(json.content).run()
+    editorRef.current.insertMarkdown(markdownPuro)
     foiEditadaRef.current = true
     setShowTemplates(false)
   }
@@ -830,15 +833,18 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
 
         {/* Editor */}
         {notaAtiva ? (
-          <NoteEditor
+          <NoteEditorCM
             key={navKey}
             nota={notaAtiva}
             textura={textura}
             editorRef={editorRef}
             backlinks={backlinks}
             getSuggestions={getSuggestions}
-            onTituloChange={titulo    => atualizarNotaAtiva({ titulo })}
-            onConteudoChange={conteudo => atualizarNotaAtiva({ conteudo })}
+            onTituloChange={titulo => atualizarNotaAtiva({ titulo })}
+            onConteudoChange={markdown => {
+              foiEditadaRef.current = true
+              atualizarNotaAtiva({ _rawMarkdown: markdown, conteudo: null })
+            }}
             onWikiLinkClick={handleWikiLinkClick}
           />
         ) : (
