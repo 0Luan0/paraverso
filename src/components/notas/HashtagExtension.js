@@ -1,4 +1,4 @@
-import { Node, mergeAttributes, nodeInputRule } from '@tiptap/core'
+import { Node, mergeAttributes, InputRule } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 
 // Extensão de #hashtags estilo Obsidian
@@ -35,14 +35,21 @@ export const Hashtag = Node.create({
     ]
   },
 
-  // nodeInputRule: API canônica TipTap v3 para nós inline atômicos
-  // Dispara quando o usuário digita #palavra seguido de espaço
+  // InputRule customizado: substitui o match inteiro (#tag) pelo node,
+  // mantendo o espaço que disparou a regra. Usar nodeInputRule causava bug:
+  // ele só substituía o grupo capturado (match[1]='tag'), deixando o '#' solto
+  // antes do node → resultado visível: '# #tag'.
   addInputRules() {
+    const type = this.type
     return [
-      nodeInputRule({
+      new InputRule({
         find: /#([\w\u00C0-\u017F]+)\s$/,
-        type: this.type,
-        getAttributes: match => ({ tag: match[1] }),
+        handler({ state, range, match }) {
+          const node = type.create({ tag: match[1] })
+          // range.from = posição do '#', range.to = posição após o espaço
+          // Substitui '#tag' (sem incluir o espaço final) pelo node
+          state.tr.replaceWith(range.from, range.to - 1, node)
+        },
       }),
     ]
   },

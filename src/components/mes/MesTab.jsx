@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { getMes, salvarMes } from '../../db/index'
+import { useVault } from '../../contexts/VaultContext'
 import { RegistroDiario } from './RegistroDiario'
 import { MetasMes } from './MetasMes'
 import { ResumoMes } from './ResumoMes'
@@ -12,6 +13,7 @@ const NOMES_MES = [
 ]
 
 export function MesTab() {
+  const { vaultPath } = useVault()
   const hoje = new Date()
   const [anoAtual, setAnoAtual] = useState(hoje.getFullYear())
   const [mesAtual, setMesAtual] = useState(hoje.getMonth() + 1)
@@ -20,14 +22,14 @@ export function MesTab() {
   const [showHabitoSetup, setShowHabitoSetup] = useState(false)
   const [saveTimer, setSaveTimer] = useState(null)
 
-  // carregar mês do DB
+  // Re-runs when vault becomes available OR when navigating months
   useEffect(() => {
     setLoading(true)
     getMes(anoAtual, mesAtual).then(m => {
       setMesObj(m)
       setLoading(false)
     })
-  }, [anoAtual, mesAtual])
+  }, [anoAtual, mesAtual, vaultPath])
 
   // auto-save com debounce
   const salvarComDebounce = useCallback((novo) => {

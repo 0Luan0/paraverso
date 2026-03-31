@@ -19,12 +19,23 @@ export function MetasMes({ mesObj, onUpdate }) {
   function adicionarItem(catId) {
     const texto = (novoItem[catId] || '').trim()
     if (!texto) return
-    const metas = mesObj.metas.map(cat => {
-      if (cat.id !== catId) return cat
-      return { ...cat, itens: [...cat.itens, { id: crypto.randomUUID(), texto, feito: false }] }
+
+    // Descobre o nome da categoria para usar como caderno
+    const cat = mesObj.metas.find(c => c.id === catId)
+    const categoriaNome = cat?.categoria || ''
+
+    const metas = mesObj.metas.map(c => {
+      if (c.id !== catId) return c
+      return { ...c, itens: [...c.itens, { id: crypto.randomUUID(), texto, feito: false }] }
     })
     onUpdate({ ...mesObj, metas })
     setNovoItem(prev => ({ ...prev, [catId]: '' }))
+
+    // Dispara criação automática de nota — NotasTab ouve este evento
+    // O caderno alvo é o nome da categoria (ex: "Leituras", "Projetos")
+    window.dispatchEvent(new CustomEvent('paraverso:criar-nota', {
+      detail: { titulo: texto, caderno: categoriaNome }
+    }))
   }
 
   function deletarItem(catId, itemIdx) {

@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { DiaModal } from './DiaModal'
 
-// 0=não feito (cinza), 1=feito (verde), 2=não foi possível (escuro)
+// 0=vazio/default (cinza –), 1=feito (verde ✓), 2=não feito (vermelho ✕)
 const HABITO_ESTADOS = {
-  0: { label: '·', bg: 'bg-bg-3 dark:bg-bg-dark3', text: 'text-ink-3 dark:text-ink-dark3' },
+  0: { label: '–', bg: 'bg-ink-2/30 dark:bg-ink-dark3/30', text: 'text-ink-3 dark:text-ink-dark3' },
   1: { label: '✓', bg: 'bg-green-800/80 dark:bg-green-900', text: 'text-green-300' },
-  2: { label: '–', bg: 'bg-ink-2/30 dark:bg-ink-dark3/30', text: 'text-ink-3 dark:text-ink-dark3' },
+  2: { label: '✕', bg: 'bg-red-800/70 dark:bg-red-900/80', text: 'text-red-300' },
 }
 
 export function RegistroDiario({ mesObj, hoje, onUpdate }) {
