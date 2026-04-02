@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-
-const NOMES_MES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
+import { NOMES_MES } from '../../lib/mesUtils'
 
 export function DiaModal({ dia, mesObj, onClose, onSave }) {
   const [nota, setNota] = useState(dia.nota || '')

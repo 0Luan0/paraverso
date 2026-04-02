@@ -7,11 +7,13 @@ export function StatBar({ mesObj, hoje }) {
 
   const diasComMemo = mesObj.dias.filter(d => d.memo && d.memo.trim()).length
 
-  // calcular % geral de hábitos
+  // calcular % geral de hábitos (apenas dias <= hoje)
   let totalPossiveis = 0
   let totalFeitos = 0
   mesObj.dias.forEach(dia => {
-    (dia.habitos || []).forEach(h => {
+    const dataDia = new Date(mesObj.ano, mesObj.mes - 1, dia.n)
+    if (dataDia > hoje) return
+    ;(dia.habitos || []).forEach(h => {
       if (h !== 2) totalPossiveis++
       if (h === 1) totalFeitos++
     })

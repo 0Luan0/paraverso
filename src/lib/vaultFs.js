@@ -29,6 +29,7 @@
  */
 
 import { markdownParaTipTapJson, parseObsidianFrontmatter, tiptapJsonParaMarkdown } from './markdownUtils'
+import { mesId, criarMesVazio } from './mesUtils'
 
 const el = () => window.electron
 
@@ -40,7 +41,24 @@ const RESERVED_DIRS = new Set(['meses'])
 // Pasta de templates configurável (padrão: 'templates'). Atualizada pelo ConfigTab.
 let configuredTemplatesDir = 'templates'
 export function setTemplatesDir(nome) { configuredTemplatesDir = nome || 'templates' }
-export function getTemplatesDir()     { return configuredTemplatesDir }
+
+// ── Save semaphore — serializa saves por nota ID ────────────────────────────
+const _savingNotes = new Map()
+
+async function acquireSaveLock(notaId) {
+  while (_savingNotes.has(notaId)) {
+    await _savingNotes.get(notaId)
+  }
+  let resolve
+  const promise = new Promise(r => { resolve = r })
+  _savingNotes.set(notaId, promise)
+  return resolve
+}
+
+function releaseSaveLock(notaId, resolve) {
+  _savingNotes.delete(notaId)
+  resolve()
+}
 
 // ── Path helpers ──────────────────────────────────────────────────────────────
 
@@ -50,6 +68,28 @@ export async function joinPath(...parts) {
 
 function sanitizeName(name) {
   return (name || 'sem-titulo').replace(/[/\\:*?"<>|]/g, '-').trim() || 'sem-titulo'
+}
+
+/**
+ * Verifica se filename já existe para outra nota (ID diferente).
+ * Se existir, adiciona sufixo numérico: "nome 2", "nome 3", etc.
+ */
+async function resolveFilenameCollision(dirPath, baseFilename, notaId) {
+  let candidate = baseFilename
+  let counter = 2
+  while (true) {
+    const fullPath = await el().joinPath(dirPath, candidate + '.md')
+    const exists = await el().exists(fullPath)
+    if (!exists) return candidate
+    // Arquivo existe — verificar se é a mesma nota (mesmo ID)
+    try {
+      const raw = await el().readFile(fullPath)
+      const idMatch = raw.match(/^id:\s*(.+)$/m)
+      if (idMatch && idMatch[1].trim() === notaId) return candidate // mesma nota, ok
+    } catch { /* se não conseguir ler, assume conflito */ }
+    candidate = `${baseFilename} ${counter++}`
+    if (counter > 100) throw new Error(`Colisão de filename: não foi possível resolver para "${baseFilename}"`)
+  }
 }
 
 function filenameToId(filename) {
@@ -202,14 +242,6 @@ function serializeMdFile(frontmatter, body = '') {
 // ── Notes ─────────────────────────────────────────────────────────────────────
 
 /**
- * Returns the file path for a note.
- * Now based on sanitized title (human-readable), not UUID.
- */
-export async function getNotaPath(vaultPath, caderno, titulo) {
-  return el().joinPath(vaultPath, sanitizeName(caderno), sanitizeName(titulo) + '.md')
-}
-
-/**
  * Save a note to vault.
  * - Uses sanitized title as filename (Obsidian-style).
  * - Converts TipTap JSON body to Markdown before writing.
@@ -217,47 +249,110 @@ export async function getNotaPath(vaultPath, caderno, titulo) {
  * - After saving, updates nota._filename for next-save rename tracking.
  */
 export async function salvarNotaVault(vaultPath, nota) {
-  const newFilename = sanitizeName(nota.titulo || 'sem-titulo')
-  const cadernoDir  = sanitizeName(nota.caderno || 'Pensamentos')
-  const newPath     = await el().joinPath(vaultPath, cadernoDir, newFilename + '.md')
+  const resolve = await acquireSaveLock(nota.id)
+  try {
+    const baseFilename = sanitizeName(nota.titulo || 'sem-titulo')
+    const cadernoDir   = sanitizeName(nota.caderno || 'Pensamentos')
+    const dirPath      = await el().joinPath(vaultPath, cadernoDir)
 
-  // ── Rename: delete old file if title changed ──
-  if (nota._filename && nota._filename !== newFilename) {
-    try {
-      const oldPath = await el().joinPath(vaultPath, cadernoDir, nota._filename + '.md')
-      await el().deleteFile(oldPath)
-    } catch {
-      // Old file may not exist — harmless
-    }
-  }
+    // ── Resolve colisão de filename (outra nota com mesmo nome) ──
+    const newFilename = await resolveFilenameCollision(dirPath, baseFilename, nota.id)
+    const newPath     = await el().joinPath(dirPath, newFilename + '.md')
 
-  // ── Convert content to Markdown ──
-  // Se _rawMarkdown existe, a nota não foi editada pelo usuário — usa o original
-  // para evitar round-trip lossy (TipTap JSON → Markdown pode perder formatação).
-  // Quando o usuário edita, atualizarNotaAtiva() deleta _rawMarkdown.
-  let markdownBody = ''
-  if (nota.conteudo) {
-    if (typeof nota.conteudo === 'object' && nota.conteudo.type === 'doc') {
-      if (nota._rawMarkdown !== undefined && nota._rawMarkdown !== null) {
-        markdownBody = nota._rawMarkdown
-      } else {
-        markdownBody = tiptapJsonParaMarkdown(nota.conteudo)
+    // ── Rename: se título mudou, usa rename atômico do OS ──
+    if (nota._filename && nota._filename !== newFilename) {
+      try {
+        const oldPath = await el().joinPath(dirPath, nota._filename + '.md')
+        const oldExists = await el().exists(oldPath)
+        if (oldExists) {
+          await el().rename(oldPath, newPath)
+        }
+      } catch {
+        // Old file may not exist — harmless, write abaixo cria o novo
       }
-    } else if (typeof nota.conteudo === 'string') {
-      markdownBody = nota._rawMarkdown ?? nota.conteudo
     }
-  } else if (nota._rawMarkdown) {
-    markdownBody = nota._rawMarkdown
+
+    // ── Convert content to Markdown ──
+    let markdownBody = ''
+    if (nota.conteudo) {
+      if (typeof nota.conteudo === 'object' && nota.conteudo.type === 'doc') {
+        if (nota._rawMarkdown !== undefined && nota._rawMarkdown !== null) {
+          markdownBody = nota._rawMarkdown
+        } else {
+          markdownBody = tiptapJsonParaMarkdown(nota.conteudo)
+        }
+      } else if (typeof nota.conteudo === 'string') {
+        markdownBody = nota._rawMarkdown ?? nota.conteudo
+      }
+    } else if (nota._rawMarkdown) {
+      markdownBody = nota._rawMarkdown
+    }
+
+    // ── Strip private fields before writing ──
+    const { _filename, _obsidian, _rawMarkdown, ...notaLimpa } = nota
+    const yaml = serializeNoteYaml(notaLimpa)
+    await el().writeFile(newPath, yaml + markdownBody)
+
+    // Mutate nota._filename so next save knows the current filename
+    nota._filename = newFilename
+    return newPath
+  } finally {
+    releaseSaveLock(nota.id, resolve)
   }
+}
 
-  // ── Strip private fields before writing ──
-  const { _filename, _obsidian, _rawMarkdown, ...notaLimpa } = nota
-  const yaml = serializeNoteYaml(notaLimpa)
-  await el().writeFile(newPath, yaml + markdownBody)
+/**
+ * Move a note from one caderno to another.
+ * Reads the file, updates caderno in frontmatter, writes to new location, deletes old.
+ */
+export async function moverNotaVault(vaultPath, nota, novoCaderno) {
+  console.log('[moverNotaVault] chamado:', { vaultPath, id: nota?.id, titulo: nota?.titulo, _filename: nota?._filename, caderno: nota?.caderno, subpasta: nota?.subpasta, novoCaderno })
+  const cadernoAtual = sanitizeName(nota.caderno || '')
+  const cadernoNovo  = sanitizeName(novoCaderno || '')
+  if (cadernoAtual === cadernoNovo) return nota
 
-  // Mutate nota._filename so next save knows the current filename
-  nota._filename = newFilename
-  return newPath
+  const filename = nota._filename || sanitizeName(nota.titulo || 'sem-titulo')
+
+  // subpasta é opcional — arquivo pode estar em caderno/subpasta/filename.md
+  const oldPath = nota.subpasta
+    ? await el().joinPath(vaultPath, cadernoAtual, nota.subpasta, filename + '.md')
+    : await el().joinPath(vaultPath, cadernoAtual, filename + '.md')
+
+  const newDir  = await el().joinPath(vaultPath, cadernoNovo)
+  const newPath = await el().joinPath(newDir, filename + '.md')
+
+  try {
+    // Verifica se o arquivo origem existe
+    const existe = await el().exists(oldPath)
+    if (!existe) {
+      console.error('[moverNotaVault] arquivo não encontrado:', oldPath)
+      throw new Error(`Arquivo não encontrado: ${oldPath}`)
+    }
+
+    // Lê conteúdo atual
+    const raw = await el().readFile(oldPath)
+
+    // Atualiza caderno no frontmatter
+    const updated = raw.replace(/^caderno:.*$/m, `caderno: ${yamlStr(novoCaderno)}`)
+
+    // Escreve no novo local (writeFile já faz mkdir do pai)
+    await el().writeFile(newPath, updated)
+
+    // Confirma que o write funcionou antes de deletar o original
+    const escritoOk = await el().exists(newPath)
+    if (!escritoOk) {
+      throw new Error(`Write falhou — arquivo não encontrado no destino: ${newPath}`)
+    }
+
+    // Deleta o arquivo antigo só após confirmação
+    await el().deleteFile(oldPath)
+
+    console.debug('[moverNotaVault] movido:', oldPath, '→', newPath)
+    return { ...nota, caderno: novoCaderno, subpasta: undefined }
+  } catch (err) {
+    console.error('[moverNotaVault] erro ao mover nota:', err)
+    throw err
+  }
 }
 
 /**
@@ -512,6 +607,57 @@ export async function getTodasNotasVault(vaultPath) {
  * sem converter o corpo markdown para TipTap JSON.
  * Usada pelo QuickSwitcher para não travar com centenas de notas.
  */
+/**
+ * Versão otimizada para o Graph View: retorna metadados + wikilinks extraídos.
+ * Usa Promise.all para leitura paralela — muito mais rápido que sequencial.
+ */
+export async function getNotasParaGrafoVault(vaultPath) {
+  const allPaths = await _getAllMdPaths(vaultPath)
+  const wikilinkRe = /\[\[([^\]]+)\]\]/g
+
+  const settled = await Promise.allSettled(allPaths.map(async (filePath) => {
+    const caderno = _topDir(filePath, vaultPath)
+    const raw = await el().readFile(filePath)
+    const { frontmatter, body, format } = parseMdFile(raw)
+    const filename = filePath.split(/[/\\]/).pop().replace(/\.md$/i, '').normalize('NFC')
+
+    // Extrai wikilinks do body
+    const wikilinks = []
+    wikilinkRe.lastIndex = 0
+    const bodyStr = body || ''
+    let m
+    while ((m = wikilinkRe.exec(bodyStr)) !== null) {
+      wikilinks.push(m[1].split('|')[0].trim().normalize('NFC').toLowerCase())
+    }
+
+    const id = (format === 'paraverso' || format === 'paraverso-legacy') && frontmatter?.id
+      ? String(frontmatter.id) : filename
+    let titulo = (frontmatter?.titulo) ? String(frontmatter.titulo) : filename
+    if (titulo === filename) {
+      const h1 = bodyStr.match(/^#\s+(.+)/m)
+      if (h1) titulo = h1[1].trim().normalize('NFC')
+    }
+
+    const subpasta = _subpasta(filePath, vaultPath)
+    return {
+      id,
+      titulo: String(titulo),
+      caderno: String(caderno),
+      subpasta: subpasta || null,
+      editadaEm: Number(frontmatter?.editadaEm) || 0,
+      _filename: filename,
+      wikilinks,
+    }
+  }))
+
+  // Log arquivos com erro sem crashar o grafo inteiro
+  for (const r of settled) {
+    if (r.status === 'rejected') console.warn('[getNotasParaGrafoVault] arquivo ignorado:', r.reason?.message)
+  }
+
+  return settled.filter(r => r.status === 'fulfilled').map(r => r.value)
+}
+
 export async function getTodasNotasMetadataVault(vaultPath) {
   const allPaths = await _getAllMdPaths(vaultPath)
   const notas = []
@@ -565,7 +711,7 @@ export async function lerTemplateVault(vaultPath, filename) {
   const filePath = await el().joinPath(vaultPath, configuredTemplatesDir, filename)
   const raw = await el().readFile(filePath)
   const { body } = parseMdFile(raw)
-  return body || raw
+  return (body || raw).trimStart()
 }
 
 // ── Cadernos (derived from folder names) ─────────────────────────────────────
@@ -598,29 +744,7 @@ export async function criarCadernoVault(vaultPath, nome) {
 
 // ── Monthly data ──────────────────────────────────────────────────────────────
 
-function mesId(ano, mes) {
-  return `${ano}-${String(mes).padStart(2, '0')}`
-}
-
-function criarMesVazio(ano, mes) {
-  const diasNoMes = new Date(ano, mes, 0).getDate()
-  const nomesDias = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S']
-  const dias = Array.from({ length: diasNoMes }, (_, i) => {
-    const n = i + 1
-    const data = new Date(ano, mes - 1, n)
-    return { n, letraDia: nomesDias[data.getDay()], memo: '', nota: '', habitos: [] }
-  })
-  return {
-    id: mesId(ano, mes), ano, mes,
-    habitos: ['Treino', 'Leitura', 'Foco', 'Bem-estar'],
-    dias,
-    metas: [
-      { id: crypto.randomUUID(), categoria: 'Leituras', itens: [] },
-      { id: crypto.randomUUID(), categoria: 'Projetos', itens: [] },
-    ],
-    resumo: '',
-  }
-}
+// mesId e criarMesVazio importados de ./mesUtils
 
 export async function getMesPath(vaultPath, ano, mes) {
   return el().joinPath(vaultPath, 'meses', `${mesId(ano, mes)}.md`)

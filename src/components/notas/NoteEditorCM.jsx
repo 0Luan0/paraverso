@@ -1,26 +1,28 @@
 import { useEffect, useRef, useState } from 'react'
-import { EditorView, keymap, placeholder as cmPlaceholder, ViewPlugin, Decoration } from '@codemirror/view'
+import { EditorView, keymap, placeholder as cmPlaceholder, ViewPlugin, Decoration, WidgetType } from '@codemirror/view'
 import { EditorState, RangeSetBuilder } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
 import { autocompletion } from '@codemirror/autocomplete'
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { HighlightStyle, syntaxHighlighting, syntaxTree, foldService, codeFolding, foldGutter, foldKeymap } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 
-// ── Markdown syntax highlighting (WYSIWYG-like) ────────────────────────────
+// ── Markdown syntax highlighting ────────────────────────────────────────────
 const markdownHighlight = HighlightStyle.define([
-  { tag: tags.heading1, fontSize: '1.8em', fontWeight: '700', lineHeight: '1.3' },
-  { tag: tags.heading2, fontSize: '1.4em', fontWeight: '600', lineHeight: '1.4' },
-  { tag: tags.heading3, fontSize: '1.2em', fontWeight: '600' },
-  { tag: tags.heading4, fontSize: '1.1em', fontWeight: '600' },
+  { tag: tags.heading1, fontSize: '1.8em', fontWeight: '700', lineHeight: '1.3', color: '#e8a44a' },
+  { tag: tags.heading2, fontSize: '1.4em', fontWeight: '600', lineHeight: '1.4', color: '#e05c5c' },
+  { tag: tags.heading3, fontSize: '1.2em', fontWeight: '600', color: '#6b9ce8' },
+  { tag: tags.heading4, fontSize: '1.1em', fontWeight: '600', color: '#e8c84a' },
+  { tag: tags.heading5, fontSize: '1.05em', fontWeight: '600', color: '#7ec8e3' },
+  { tag: tags.heading6, fontSize: '1em', fontWeight: '600', color: '#b07ee8' },
   { tag: tags.strong, fontWeight: '700' },
   { tag: tags.emphasis, fontStyle: 'italic' },
   { tag: tags.strikethrough, textDecoration: 'line-through', opacity: '0.6' },
-  { tag: tags.link, color: 'var(--accent, #C17A3A)' },
-  { tag: tags.url, color: 'var(--accent, #C17A3A)', opacity: '0.7' },
+  { tag: tags.link, color: '#D4924A' },
+  { tag: tags.url, color: '#D4924A', opacity: '0.7' },
   { tag: tags.monospace, fontFamily: 'ui-monospace, monospace', background: 'rgba(128,128,128,0.12)', borderRadius: '3px', padding: '1px 4px' },
-  // Fade markdown syntax chars (# ** * ~~ ``` etc)
+  { tag: tags.quote, fontStyle: 'italic', opacity: '0.75' },
   { tag: tags.processingInstruction, opacity: '0.35' },
   { tag: tags.meta, opacity: '0.35' },
 ])
@@ -28,36 +30,68 @@ const markdownHighlight = HighlightStyle.define([
 // ── Tema base (Obsidian-like) ───────────────────────────────────────────────
 const baseTheme = EditorView.theme({
   '&': { height: '100%', fontSize: '15px', fontFamily: 'inherit', background: 'transparent' },
-  '.cm-content': {
-    padding: '24px 32px', caretColor: 'var(--accent, #C17A3A)', fontFamily: 'inherit',
-    lineHeight: '1.7', maxWidth: '720px', margin: '0 auto',
-  },
+  '.cm-content': { padding: '24px 32px', caretColor: '#D4924A', fontFamily: 'inherit', lineHeight: '1.7', color: '#d4cfc9' },
   '.cm-focused': { outline: 'none' },
   '.cm-line': { padding: '0' },
   '.cm-scroller': { overflow: 'auto', height: '100%' },
   '.cm-placeholder': { color: 'rgba(128,128,128,0.5)', fontStyle: 'italic' },
   '.cm-activeLine': { background: 'rgba(255,255,255,0.02)' },
-  // Wikilink decoration
-  '.cm-wikilink': {
-    color: 'var(--accent, #C17A3A)', cursor: 'pointer',
-    borderBottom: '1px solid currentColor', opacity: '0.85',
-  },
-  '.cm-wikilink:hover': { opacity: '1' },
-  // Hashtag decoration
-  '.cm-hashtag': { color: 'var(--accent, #C17A3A)', opacity: '0.7' },
-  // Autocomplete dropdown
-  '.cm-tooltip-autocomplete': {
-    background: 'var(--surface, #FAF6EF) !important',
-    border: '1px solid var(--bdr, #D5CFC4) !important',
-    borderRadius: '8px !important',
-    boxShadow: '0 8px 24px rgba(0,0,0,0.15) !important',
-    overflow: 'hidden',
-  },
-  '.cm-tooltip-autocomplete ul': { maxHeight: '240px' },
-  '.cm-tooltip-autocomplete ul li': { padding: '6px 12px !important', fontSize: '13px', color: 'var(--ink, #1A1A18)' },
-  '.cm-tooltip-autocomplete ul li[aria-selected]': { background: 'var(--accent, #C17A3A) !important', color: 'white !important' },
-  // Dark mode overrides
   '&.cm-focused .cm-activeLine': { background: 'rgba(255,255,255,0.03)' },
+  '.cm-gutters': { background: 'transparent', border: 'none', paddingLeft: '8px' },
+  '.cm-foldGutter': { width: '16px' },
+  '.cm-foldGutter .cm-gutterElement': {
+    cursor: 'pointer',
+    color: 'rgba(232,164,74,0.5)',
+    fontSize: '14px',
+    lineHeight: '1.7',
+    textAlign: 'center',
+    transition: 'color 0.15s',
+    padding: '0',
+  },
+  '.cm-foldGutter .cm-gutterElement:hover': { color: '#D4924A' },
+  '.cm-foldPlaceholder': {
+    background: 'rgba(212,146,74,0.1)',
+    border: '1px solid rgba(212,146,74,0.25)',
+    borderRadius: '3px',
+    color: '#D4924A',
+    padding: '0 6px',
+    margin: '0 4px',
+    cursor: 'pointer',
+    fontSize: '12px',
+  },
+  '.cm-wikilink': { color: '#D4924A', cursor: 'pointer', borderBottom: '1px solid currentColor', opacity: '0.85' },
+  '.cm-wikilink:hover': { opacity: '1' },
+  '.cm-hashtag': { color: '#D4924A', opacity: '0.7' },
+  '.cm-blockquote': { borderLeft: '3px solid #e8a44a', paddingLeft: '12px', color: '#a89080', fontStyle: 'italic' },
+  '.cm-tooltip-autocomplete': { background: '#221E16 !important', border: '1px solid #3A3428 !important', borderRadius: '8px !important', boxShadow: '0 8px 24px rgba(0,0,0,0.15) !important', overflow: 'hidden' },
+  '.cm-tooltip-autocomplete ul': { maxHeight: '240px' },
+  '.cm-tooltip-autocomplete ul li': { padding: '6px 12px !important', fontSize: '13px', color: '#EDE8DF' },
+  '.cm-tooltip-autocomplete ul li[aria-selected]': { background: '#D4924A !important', color: 'white !important' },
+})
+
+// ── Fold headings (Obsidian-like) ──────────────────────────────────────────
+const markdownHeadingFold = foldService.of((state, lineStart) => {
+  const line = state.doc.lineAt(lineStart)
+  const match = line.text.match(/^(#{1,6})\s/)
+  if (!match) return null
+
+  const level = match[1].length
+  const lastLine = state.doc.lines
+
+  // Procura próximo heading de nível igual ou superior
+  for (let i = line.number + 1; i <= lastLine; i++) {
+    const nextLine = state.doc.line(i)
+    const nextMatch = nextLine.text.match(/^(#{1,6})\s/)
+    if (nextMatch && nextMatch[1].length <= level) {
+      // Colapsa até o final da linha anterior (exclui o próximo heading)
+      const endLine = state.doc.line(i - 1)
+      return endLine.to > line.to ? { from: line.to, to: endLine.to } : null
+    }
+  }
+
+  // Heading é o último — colapsa até o final do documento
+  const docEnd = state.doc.line(lastLine).to
+  return docEnd > line.to ? { from: line.to, to: docEnd } : null
 })
 
 // ── Wikilink decoration plugin ──────────────────────────────────────────────
@@ -95,31 +129,42 @@ const hashtagPlugin = ViewPlugin.fromClass(class {
 
 // ── Wikilink autocomplete ───────────────────────────────────────────────────
 function criarWikilinkCompletion(getSuggestionsRef) {
-  return (context) => {
+  return async (context) => {
     const before = context.matchBefore(/\[\[[^\]]*/)
     if (!before) return null
     const query = before.text.slice(2)
-    const sugestoes = getSuggestionsRef.current?.(query) ?? []
-    if (!sugestoes.length && !query) return null
+    let sugestoes = []
+    try { sugestoes = await getSuggestionsRef.current?.(query) ?? [] } catch { return null }
+    if (!sugestoes.length && query.length === 0) return null
     return {
-      from: before.from,
-      options: sugestoes.map(s => ({
-        label: typeof s === 'string' ? s : (s.titulo ?? ''),
-        detail: typeof s === 'object' ? (s.caderno ?? '') : '',
-        type: 'text',
-        apply(view, completion, from, to) {
-          view.dispatch({
-            changes: { from, to, insert: `[[${completion.label}]] ` },
-            selection: { anchor: from + completion.label.length + 4 },
-          })
-        },
-      })),
-      validFor: /^\[\[[^\]]*$/,
+      from: before.from + 2,
+      to: context.pos,
+      filter: false,
+      options: sugestoes.map(s => {
+        const label = typeof s === 'string' ? s : (s.titulo ?? s.label ?? '')
+        return {
+          label,
+          type: 'text',
+          boost: 1,
+          apply(view, _completion, from, to) {
+            const insertFrom = before.from
+            const docStr = view.state.doc.toString()
+            // Se auto-close já inseriu ]], inclui no range a substituir
+            let insertTo = to
+            if (docStr.slice(to, to + 2) === ']]') insertTo = to + 2
+            const insert = `[[${label}]]`
+            view.dispatch({
+              changes: { from: insertFrom, to: insertTo, insert },
+              selection: { anchor: insertFrom + insert.length },
+            })
+          },
+        }
+      }),
     }
   }
 }
 
-// ── Auto-close [[ → [[|]] ──────────────────────────────────────────────────
+// ── Auto-close [[ → [[|]] + Backspace inteligente ──────────────────────────
 const wikilinkKeymap = keymap.of([
   {
     key: '[',
@@ -136,58 +181,171 @@ const wikilinkKeymap = keymap.of([
       return false
     },
   },
+  {
+    key: 'Backspace',
+    run(view) {
+      const { from } = view.state.selection.main
+      if (view.state.sliceDoc(from - 2, from + 2) === '[[]]') {
+        view.dispatch({ changes: { from: from - 2, to: from + 2, insert: '' }, selection: { anchor: from - 2 } })
+        return true
+      }
+      return false
+    },
+  },
 ])
 
-// ── Toolbar ─────────────────────────────────────────────────────────────────
-function Toolbar({ view }) {
-  if (!view) return null
-  const btn = (label, title, fn) => (
-    <button key={label} title={title} onClick={() => { fn(); view.focus() }}
-      className="text-xs px-2 py-0.5 rounded font-mono min-w-[24px] text-center text-ink-3 dark:text-ink-dark3 hover:text-ink dark:hover:text-ink-dark hover:bg-bg-2 dark:hover:bg-bg-dark2 transition-colors">
-      {label}
-    </button>
-  )
-  const sep = (i) => <div key={`s${i}`} className="w-px h-4 bg-bdr dark:bg-bdr-dark mx-1" />
-  const wrap = (before, after) => () => {
-    const { from, to } = view.state.selection.main
-    const selected = view.state.sliceDoc(from, to)
-    view.dispatch({ changes: { from, to, insert: before + selected + after }, selection: { anchor: from + before.length, head: from + before.length + selected.length } })
-  }
-  const line = (prefix) => () => {
-    const ln = view.state.doc.lineAt(view.state.selection.main.from)
-    if (ln.text.startsWith(prefix)) {
-      view.dispatch({ changes: { from: ln.from, to: ln.from + prefix.length, insert: '' } })
-    } else {
-      view.dispatch({ changes: { from: ln.from, insert: prefix } })
+// ── Hide markdown syntax (Live Preview) ─────────────────────────────────────
+// ── Live Preview — esconde tokens MD fora da linha ativa (syntax-tree) ──────
+const HIDE_TOKENS = new Set([
+  'HeaderMark',       // # ## ###
+  'EmphasisMark',     // * ** _ __
+  'StrikethroughMark',// ~~
+  'CodeMark',         // `
+  'QuoteMark',        // >
+])
+
+const hideMarkdownPlugin = ViewPlugin.fromClass(class {
+  decorations = Decoration.none
+  constructor(view) { this.decorations = this.build(view) }
+  update(u) { if (u.docChanged || u.selectionSet || u.viewportChanged) this.decorations = this.build(u.view) }
+  build(view) {
+    const hide = Decoration.replace({})
+    const ranges = []
+    const cursorLine = view.state.doc.lineAt(view.state.selection.main.head)
+
+    // Esconde tokens via syntax tree
+    for (const { from, to } of view.visibleRanges) {
+      syntaxTree(view.state).iterate({
+        from, to,
+        enter(node) {
+          if (!HIDE_TOKENS.has(node.name)) return
+          // Não esconde na linha do cursor
+          const nodeLine = view.state.doc.lineAt(node.from)
+          if (nodeLine.number === cursorLine.number) return
+          ranges.push([node.from, node.to])
+        },
+      })
     }
+
+    // Também esconde o espaço após # em headings (HeaderMark não inclui o espaço)
+    const text = view.state.doc.toString()
+    for (const m of text.matchAll(/^(#{1,6}) /gm)) {
+      const line = view.state.doc.lineAt(m.index)
+      if (line.number === cursorLine.number) continue
+      // O espaço após os # (HeaderMark já esconde os #, aqui esconde o espaço)
+      ranges.push([m.index + m[1].length, m.index + m[1].length + 1])
+    }
+
+    // Ordena e remove sobreposições
+    ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1])
+    const builder = new RangeSetBuilder()
+    let lastTo = -1
+    for (const [f, t] of ranges) {
+      if (f >= lastTo && f < t) { builder.add(f, t, hide); lastTo = t }
+    }
+    return builder.finish()
   }
-  const hr = () => {
-    const { to } = view.state.selection.main
-    view.dispatch({ changes: { from: to, insert: '\n\n---\n\n' } })
+}, { decorations: v => v.decorations })
+
+// ── HR visual widget ────────────────────────────────────────────────────────
+class HRWidget extends WidgetType {
+  toDOM() {
+    const hr = document.createElement('hr')
+    hr.style.cssText = 'border:none;border-top:1px solid rgba(255,255,255,0.15);margin:8px 0;display:block;'
+    return hr
   }
-  return (
-    <div className="flex items-center gap-0.5 px-6 py-1.5 border-b border-bdr-2 dark:border-bdr-dark2 flex-shrink-0 flex-wrap">
-      {btn('B', 'Negrito (**)', wrap('**', '**'))}
-      {btn('I', 'Itálico (*)', wrap('*', '*'))}
-      {btn('S', 'Tachado (~~)', wrap('~~', '~~'))}
-      {sep(0)}
-      {btn('H1', 'Título 1', line('# '))}
-      {btn('H2', 'Título 2', line('## '))}
-      {btn('H3', 'Título 3', line('### '))}
-      {sep(1)}
-      {btn('—', 'Lista', line('- '))}
-      {btn('1.', 'Lista numerada', line('1. '))}
-      {btn('☐', 'Checklist', line('- [ ] '))}
-      {sep(2)}
-      {btn('❝', 'Citação', line('> '))}
-      {btn('`', 'Código', wrap('`', '`'))}
-      {btn('─', 'Divisor (---)', hr)}
-      <span className="ml-auto text-xs text-ink-3/30 dark:text-ink-dark3/30 hidden sm:block flex-shrink-0">
-        [[ → autocomplete
-      </span>
-    </div>
-  )
+  ignoreEvent() { return false }
 }
+
+const hrPlugin = ViewPlugin.fromClass(class {
+  decorations = Decoration.none
+  constructor(view) { this.decorations = this.build(view) }
+  update(u) { if (u.docChanged || u.selectionSet || u.viewportChanged) this.decorations = this.build(u.view) }
+  build(view) {
+    const builder = new RangeSetBuilder()
+    const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number
+    for (let i = 1; i <= view.state.doc.lines; i++) {
+      const line = view.state.doc.line(i)
+      if (line.text.trim() === '---' && i !== cursorLine) {
+        builder.add(line.from, line.to, Decoration.replace({ widget: new HRWidget() }))
+      }
+    }
+    return builder.finish()
+  }
+}, { decorations: v => v.decorations })
+
+// ── Task checkbox widget (3 states: [ ] [x] [/]) ───────────────────────────
+class CheckboxWidget extends WidgetType {
+  constructor(state, from, to) { super(); this.state = state; this.from = from; this.to = to }
+  toDOM(view) {
+    const box = document.createElement('span')
+    box.style.cssText = `
+      display:inline-flex;align-items:center;justify-content:center;
+      width:16px;height:16px;border-radius:3px;cursor:pointer;
+      margin-right:6px;vertical-align:middle;user-select:none;
+      font-size:10px;line-height:1;flex-shrink:0;
+      transition:background 0.15s,border-color 0.15s;
+    `
+    if (this.state === 'done') {
+      box.style.background = '#D4924A'
+      box.style.border = '1.5px solid #D4924A'
+      box.style.color = 'white'
+      box.textContent = '✓'
+    } else if (this.state === 'partial') {
+      box.style.background = 'rgba(193,122,58,0.25)'
+      box.style.border = '1.5px solid #D4924A'
+      box.style.color = '#D4924A'
+      box.textContent = '—'
+    } else {
+      box.style.background = 'transparent'
+      box.style.border = '1.5px solid rgba(128,128,128,0.4)'
+      box.textContent = ''
+    }
+    box.addEventListener('click', e => {
+      e.preventDefault()
+      const next = this.state === 'empty' ? '[x]' : this.state === 'done' ? '[/]' : '[ ]'
+      view.dispatch({ changes: { from: this.from, to: this.to, insert: next } })
+    })
+    return box
+  }
+  ignoreEvent() { return false }
+}
+
+const taskPlugin = ViewPlugin.fromClass(class {
+  decorations = Decoration.none
+  constructor(view) { this.decorations = this.build(view) }
+  update(u) { if (u.docChanged || u.viewportChanged) this.decorations = this.build(u.view) }
+  build(view) {
+    const builder = new RangeSetBuilder()
+    for (const { from, to } of view.visibleRanges) {
+      const text = view.state.doc.sliceString(from, to)
+      for (const m of text.matchAll(/^- (\[ \]|\[x\]|\[\/\])/gm)) {
+        const checkFrom = from + m.index + 2
+        const checkTo = checkFrom + m[1].length
+        const state = m[1] === '[x]' ? 'done' : m[1] === '[/]' ? 'partial' : 'empty'
+        builder.add(checkFrom, checkTo, Decoration.replace({ widget: new CheckboxWidget(state, checkFrom, checkTo) }))
+      }
+    }
+    return builder.finish()
+  }
+}, { decorations: v => v.decorations })
+
+// ── Blockquote line decoration ──────────────────────────────────────────────
+const blockquotePlugin = ViewPlugin.fromClass(class {
+  decorations = Decoration.none
+  constructor(view) { this.decorations = this.build(view) }
+  update(u) { if (u.docChanged || u.selectionSet || u.viewportChanged) this.decorations = this.build(u.view) }
+  build(view) {
+    const builder = new RangeSetBuilder()
+    for (let i = 1; i <= view.state.doc.lines; i++) {
+      const line = view.state.doc.line(i)
+      if (line.text.startsWith('>')) {
+        builder.add(line.from, line.from, Decoration.line({ class: 'cm-blockquote' }))
+      }
+    }
+    return builder.finish()
+  }
+}, { decorations: v => v.decorations })
 
 // ── Backlinks panel ─────────────────────────────────────────────────────────
 function BacklinksPanel({ backlinks, onWikiLinkClick }) {
@@ -223,6 +381,7 @@ export function NoteEditorCM({
   nota,
   textura,
   editorRef,
+  cmViewRef,
   backlinks,
   getSuggestions,
   onTituloChange,
@@ -231,6 +390,7 @@ export function NoteEditorCM({
 }) {
   const containerRef = useRef(null)
   const viewRef = useRef(null)
+  const tituloRef = useRef(null)
   const isInitializingRef = useRef(true)
   const onChangeRef = useRef(onConteudoChange)
   const onWikilinkRef = useRef(onWikiLinkClick)
@@ -254,36 +414,50 @@ export function NoteEditorCM({
         extensions: [
           history(),
           wikilinkKeymap,
-          keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+          keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
           markdown({ base: markdownLanguage, codeLanguages: languages }),
           syntaxHighlighting(markdownHighlight),
+          markdownHeadingFold,
+          codeFolding(),
+          foldGutter({
+            openText: '▸',
+            closedText: '▾',
+          }),
           wikilinkPlugin,
           hashtagPlugin,
+          hideMarkdownPlugin,
+          hrPlugin,
+          taskPlugin,
+          blockquotePlugin,
           baseTheme,
           EditorView.lineWrapping,
           cmPlaceholder('Escreva algo… use [[nota]], #tag, **negrito**, *itálico*, # Título'),
           autocompletion({
             override: [criarWikilinkCompletion(getSuggestionsRef)],
             activateOnTyping: true,
-            closeOnBlur: true,
+            activateOnTypingDelay: 100,
+            closeOnBlur: false,
+            defaultKeymap: true,
           }),
           EditorView.updateListener.of(update => {
             if (update.docChanged && !isInitializingRef.current) {
               onChangeRef.current?.(update.state.doc.toString())
             }
+            if (update.docChanged || update.selectionSet) {
+              window.dispatchEvent(new Event('paraverso:editor-update'))
+            }
           }),
           EditorView.domEventHandlers({
             click(event, view) {
-              const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
-              if (pos == null) return false
-              const doc = view.state.doc.toString()
-              const re = /\[\[([^\[\]]+)\]\]/g
-              let m
-              while ((m = re.exec(doc)) !== null) {
-                if (pos >= m.index && pos <= m.index + m[0].length) {
-                  const titulo = m[1].split('|')[0].trim()
+              // Verifica se clicou num elemento decorado como wikilink
+              let target = event.target
+              while (target && target !== view.dom) {
+                if (target.classList?.contains('cm-wikilink')) {
+                  const texto = target.textContent ?? ''
+                  const titulo = texto.replace(/^\[\[/, '').replace(/\]\]$/, '').split('|')[0].trim()
                   if (titulo) { onWikilinkRef.current?.(titulo); return true }
                 }
+                target = target.parentElement
               }
               return false
             },
@@ -293,6 +467,7 @@ export function NoteEditorCM({
       parent: containerRef.current,
     })
     viewRef.current = view
+    if (cmViewRef) cmViewRef.current = view
 
     // Libera onChange após inicialização completa (50ms garante que qualquer onChange inicial já passou)
     setTimeout(() => { isInitializingRef.current = false }, 50)
@@ -309,26 +484,33 @@ export function NoteEditorCM({
       }
     }
 
-    return () => { isInitializingRef.current = true; view.destroy(); viewRef.current = null }
+    return () => { isInitializingRef.current = true; view.destroy(); viewRef.current = null; if (cmViewRef) cmViewRef.current = null }
+  }, []) // eslint-disable-line
+
+
+  // Auto-focus título em notas novas
+  useEffect(() => {
+    if (nota?.titulo?.startsWith('Sem título') && tituloRef.current) {
+      tituloRef.current.focus()
+      tituloRef.current.select()
+    }
   }, []) // eslint-disable-line
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="px-8 pt-6 pb-2 flex-shrink-0">
+      {/* Título editável inline */}
+      <div className="px-8 pt-3 pb-1 flex-shrink-0">
         <input
+          ref={tituloRef}
           type="text"
           value={nota?.titulo ?? ''}
           onChange={e => onTituloChange?.(e.target.value)}
-          placeholder="Título"
-          className="w-full font-serif text-2xl font-medium bg-transparent text-ink dark:text-ink-dark placeholder-ink-3 dark:placeholder-ink-dark3 focus:outline-none border-b border-transparent focus:border-bdr-2 dark:focus:border-bdr-dark2 pb-1 transition-colors"
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); viewRef.current?.focus() } }}
+          placeholder="Sem título"
+          className="w-full font-serif text-2xl font-semibold bg-transparent text-ink dark:text-ink-dark placeholder-ink-3/40 dark:placeholder-ink-dark3/40 focus:outline-none"
         />
-        {nota?._obsidian && (
-          <p className="text-[11px] text-ink-3/70 dark:text-ink-dark3/70 mt-1.5">
-            ✦ Importado do Obsidian
-          </p>
-        )}
       </div>
-      <Toolbar view={viewRef.current} />
+
       <div ref={containerRef} className={`flex-1 overflow-auto ${textura === 'dots' ? 'editor-texture-dots' : textura === 'grid' ? 'editor-texture-grid' : ''}`} />
       <BacklinksPanel backlinks={backlinks} onWikiLinkClick={onWikiLinkClick} />
     </div>

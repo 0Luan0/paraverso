@@ -13,13 +13,16 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   db, getCadernos, criarCaderno, criarNotaVazia,
-  salvarNota, deletarNota, getNotasPorCaderno, getTodasNotasMetadata,
+  salvarNota, deletarNota, moverNota, getNotasPorCaderno, getTodasNotasMetadata,
   getBacklinks, getVaultPath,
 } from '../../db/index'
 import { useVault } from '../../contexts/VaultContext'
 import { NotesSidebar } from './NotesSidebar'
 import { NoteEditorCM } from './NoteEditorCM'
+import { OutlinePanel } from './OutlinePanel'
 import { TemplateModal } from './TemplateModal'
+import NoteActionsMenu from './NoteActionsMenu'
+import { useSidebarResize } from '../../hooks/useSidebarResize'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -47,6 +50,8 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
   const [cadernos, setCadernos] = useState([])
   const [notas, setNotas]       = useState([])
   const [backlinks, setBacklinks] = useState([])
+  // Cache de notas por caderno — para expandir pastas sem mudar o caderno ativo
+  const [notasPorCaderno, setNotasPorCaderno] = useState({})
 
   // Vault index: Map<string, metadata> — construído uma vez, atualizado após saves
   // Usamos ref para não causar re-render ao atualizar o índice.
@@ -62,6 +67,9 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
 
   const saveTimer     = useRef(null)
   const editorRef     = useRef(null)
+  const cmViewRef     = useRef(null)
+  const [outlineOpen, setOutlineOpen] = useState(false)
+  const { width: sidebarWidth, collapsed: sidebarCollapsed, toggleCollapsed: toggleSidebar, onResizeStart: onSidebarResize } = useSidebarResize()
   const notaAtivaRef  = useRef(null) // sempre a versão mais recente da nota ativa (síncrono, sem aguardar re-render)
   const foiEditadaRef = useRef(false) // true quando o usuário editou o conteúdo desde que abriu a nota
   const [showTemplates, setShowTemplates] = useState(false)
@@ -134,6 +142,8 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
       window.removeEventListener('beforeunload', flushSave)
       // Flush ao desmontar (troca de aba) — sem isso, o debounce pendente é perdido
       flushSave()
+      // Limpa timer de status para evitar setState em componente desmontado
+      if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current)
     }
   }, []) // deps vazio: registra uma vez, sempre lê do ref
 
@@ -227,34 +237,60 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
       })
       .catch(() => { if (!cancelled) setBacklinks([]) })
     return () => { cancelled = true }
-  }, [notaAtiva?.id, notaAtiva?.titulo]) // eslint-disable-line
+  }, [notaAtiva?.id, notaAtiva?.titulo, notaAtiva?._filename]) // eslint-disable-line
 
   // ── Back / Forward ──────────────────────────────────────────────────────────
 
-  function goBack() {
-    const tab = tabs[tabAtivaIdx]
+  async function goBack() {
+    const tabSnapshot = tabAtivaIdx
+    const tab = tabs[tabSnapshot]
     if (!tab || tab.histIdx <= 0) return
     const novoIdx = tab.histIdx - 1
     const notaId = tab.history[novoIdx]
-    const nota = notas.find(n => n.id === notaId)
-    if (!nota) return
+    // Busca na lista atual, senão busca no vault
+    let nota = notas.find(n => n.id === notaId)
+    if (!nota) {
+      // Nota pode estar em outro caderno — busca via vault index
+      for (const meta of vaultIndexRef.current.values()) {
+        if (meta.id === notaId) {
+          const lista = await getNotasPorCaderno(meta.caderno)
+          if (tabAtivaIdx !== tabSnapshot) return // aba mudou durante await
+          setNotas(lista)
+          nota = lista.find(n => n.id === notaId)
+          break
+        }
+      }
+    }
+    if (!nota || tabAtivaIdx !== tabSnapshot) return
     foiEditadaRef.current = false
     notaAtivaRef.current = nota
     setNavKey(k => k + 1)
-    setTabs(prev => prev.map((t, i) => i === tabAtivaIdx ? { ...t, nota, histIdx: novoIdx } : t))
+    setTabs(prev => prev.map((t, i) => i === tabSnapshot ? { ...t, nota, caderno: nota.caderno || t.caderno, histIdx: novoIdx } : t))
   }
 
-  function goForward() {
-    const tab = tabs[tabAtivaIdx]
+  async function goForward() {
+    const tabSnapshot = tabAtivaIdx
+    const tab = tabs[tabSnapshot]
     if (!tab || tab.histIdx >= tab.history.length - 1) return
     const novoIdx = tab.histIdx + 1
     const notaId = tab.history[novoIdx]
-    const nota = notas.find(n => n.id === notaId)
-    if (!nota) return
+    let nota = notas.find(n => n.id === notaId)
+    if (!nota) {
+      for (const meta of vaultIndexRef.current.values()) {
+        if (meta.id === notaId) {
+          const lista = await getNotasPorCaderno(meta.caderno)
+          if (tabAtivaIdx !== tabSnapshot) return // aba mudou durante await
+          setNotas(lista)
+          nota = lista.find(n => n.id === notaId)
+          break
+        }
+      }
+    }
+    if (!nota || tabAtivaIdx !== tabSnapshot) return
     foiEditadaRef.current = false
     notaAtivaRef.current = nota
     setNavKey(k => k + 1)
-    setTabs(prev => prev.map((t, i) => i === tabAtivaIdx ? { ...t, nota, histIdx: novoIdx } : t))
+    setTabs(prev => prev.map((t, i) => i === tabSnapshot ? { ...t, nota, caderno: nota.caderno || t.caderno, histIdx: novoIdx } : t))
   }
 
   // ── Tab management ──────────────────────────────────────────────────────────
@@ -316,26 +352,49 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
     getNotasPorCaderno(cadernoAtivo)
       .then(lista => {
         setNotas(lista)
-        mutarTab(tab => {
-          if (tab.nota || lista.length === 0) return {}
-          const nota    = lista[0]
-          const history = [nota.id]
-          return { nota, history, histIdx: 0 }
-        })
+        // Não auto-seleciona a primeira nota — usuário escolhe qual abrir
       })
       .catch(() => setNotas([]))
   }, [cadernoAtivo, vaultPath]) // eslint-disable-line
+
+  // Carrega notas de um caderno SEM mudar o caderno ativo (para expandir na sidebar)
+  async function carregarCaderno(nome) {
+    if (notasPorCaderno[nome]) return
+    try {
+      const lista = await getNotasPorCaderno(nome)
+      setNotasPorCaderno(prev => ({ ...prev, [nome]: lista }))
+    } catch {}
+  }
+
+  // Atualiza cache quando caderno ativo carrega
+  // (mantém notasPorCaderno sincronizado com notas do caderno ativo)
+  // eslint-disable-next-line
+  useEffect(() => {
+    if (cadernoAtivo && notas.length > 0) {
+      setNotasPorCaderno(prev => ({ ...prev, [cadernoAtivo]: notas }))
+    }
+  }, [notas, cadernoAtivo])
 
   // ── CRUD ─────────────────────────────────────────────────────────────────────
 
   async function novaNota(tituloInicial, cadernoDestino) {
     const caderno = cadernoDestino || cadernoAtivo
     const nota    = criarNotaVazia(caderno)
-    if (tituloInicial) nota.titulo = tituloInicial
+    // Gera nome único para evitar duplicatas
+    const nomeBase = tituloInicial || nota.titulo
+    const lista = await getNotasPorCaderno(caderno)
+    const nomesExistentes = lista.map(n => n.titulo)
+    if (nomesExistentes.includes(nomeBase)) {
+      let i = 2
+      while (nomesExistentes.includes(`${nomeBase} ${i}`)) i++
+      nota.titulo = `${nomeBase} ${i}`
+    } else {
+      nota.titulo = nomeBase
+    }
     await salvarNota(nota)
     invalidateIndex()
-    const lista = await getNotasPorCaderno(caderno)
-    setNotas(lista)
+    const listaAtualizada = await getNotasPorCaderno(caderno)
+    setNotas(listaAtualizada)
     navigarPara(nota, caderno)
     return nota
   }
@@ -418,6 +477,113 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
     }
     notaAtivaRef.current = nota
     navigarPara(nota, nota.caderno || cadernoAtivo)
+  }
+
+  // ── Mover nota entre cadernos (drag & drop) ──────────────────────────────────
+
+  async function handleMoverNota(nota, novoCaderno) {
+    if (!nota) { console.error('[handleMoverNota] nota é undefined'); return }
+    if (!novoCaderno) { console.error('[handleMoverNota] novoCaderno é undefined'); return }
+    if (nota.caderno === novoCaderno) { console.debug('[handleMoverNota] mesmo caderno, ignorando'); return }
+
+    const cadernoOrigem = nota.caderno
+    console.debug('[handleMoverNota] iniciando:', { titulo: nota.titulo, de: cadernoOrigem, para: novoCaderno, _filename: nota._filename, subpasta: nota.subpasta })
+
+    try {
+      // 1. Espera o move no filesystem terminar completamente
+      await moverNota(nota, novoCaderno)
+
+      // 2. Remove da lista ativa (se estiver nela)
+      setNotas(prev => prev.filter(n => n.id !== nota.id))
+
+      // 3. Invalida cache de ambos os cadernos APÓS o move ter sucesso
+      setNotasPorCaderno(prev => {
+        const next = { ...prev }
+        delete next[cadernoOrigem]
+        delete next[novoCaderno]
+        return next
+      })
+
+      // 4. Força reload das pastas que estavam expandidas/ativas
+      const reloads = []
+      reloads.push(
+        getNotasPorCaderno(cadernoOrigem)
+          .then(lista => setNotasPorCaderno(prev => ({ ...prev, [cadernoOrigem]: lista })))
+          .catch(() => {})
+      )
+      reloads.push(
+        getNotasPorCaderno(novoCaderno)
+          .then(lista => setNotasPorCaderno(prev => ({ ...prev, [novoCaderno]: lista })))
+          .catch(() => {})
+      )
+      await Promise.all(reloads)
+
+      // 5. Se a nota movida estava ativa, navega para ela no novo caderno
+      if (notaAtiva?.id === nota.id) {
+        const lista = await getNotasPorCaderno(novoCaderno)
+        setNotas(lista)
+        const completa = lista.find(n => n.id === nota.id)
+        if (completa) navigarPara(completa, novoCaderno)
+      }
+
+      invalidateIndex()
+    } catch (e) {
+      console.error('[handleMoverNota] falhou:', e)
+    }
+  }
+
+  // ── Ações do menu ··· ────────────────────────────────────────────────────────
+
+  async function handleMenuRename(novoTitulo) {
+    if (!notaAtiva || !vaultPath || novoTitulo === notaAtiva.titulo) return
+
+    const oldFilename = notaAtiva._filename || notaAtiva.titulo || ''
+    const novoFilename = (novoTitulo || 'sem-titulo').replace(/[/\\:*?"<>|]/g, '-').trim() || 'sem-titulo'
+    const caderno = notaAtiva.caderno || ''
+    const subpasta = notaAtiva.subpasta
+
+    // Constrói paths
+    const oldPath = subpasta
+      ? await window.electron.joinPath(vaultPath, caderno, subpasta, oldFilename + '.md')
+      : await window.electron.joinPath(vaultPath, caderno, oldFilename + '.md')
+    const newPath = subpasta
+      ? await window.electron.joinPath(vaultPath, caderno, subpasta, novoFilename + '.md')
+      : await window.electron.joinPath(vaultPath, caderno, novoFilename + '.md')
+
+    try {
+      // Renomeia arquivo no disco
+      if (oldPath !== newPath) {
+        await window.electron.rename(oldPath, newPath)
+      }
+      // Atualiza estado com novo título e filename
+      atualizarNotaAtiva({ titulo: novoTitulo, _filename: novoFilename })
+      foiEditadaRef.current = true
+      // Recarrega lista e índice
+      const lista = await getNotasPorCaderno(cadernoAtivo)
+      setNotas(lista)
+      invalidateIndex()
+      console.debug('[handleMenuRename] renomeado:', oldFilename, '→', novoFilename)
+    } catch (err) {
+      console.error('[handleMenuRename] erro:', err)
+    }
+  }
+
+  async function handleMenuMove(novoCaderno) {
+    if (!notaAtiva) return
+    await handleMoverNota(notaAtiva, novoCaderno)
+  }
+
+  async function handleMenuDelete() {
+    if (!notaAtiva) return
+    await deletar(notaAtiva.id)
+  }
+
+  async function handleMenuOpenExternal() {
+    if (!notaAtiva || !vaultPath) return
+    const filename = notaAtiva._filename || notaAtiva.titulo || ''
+    const caderno = notaAtiva.caderno || ''
+    const filePath = await window.electron.joinPath(vaultPath, caderno, filename + '.md')
+    window.electron.openPath(filePath)
   }
 
   // ── Wikilink click — O(1) via vault index ────────────────────────────────────
@@ -631,10 +797,10 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
     return () => window.removeEventListener('paraverso:criar-nota', handleCriarNota)
   }, [cadernoAtivo]) // eslint-disable-line
 
-  // ── Nota pendente (QuickSwitcher / BuscaTab) ─────────────────────────────────
+  // ── Nota pendente (QuickSwitcher) ─────────────────────────────────────────
   //
   // QuickSwitcher passa metadata-only (sem conteudo).
-  // BuscaTab passa nota completa.
+  // QuickSwitcher passa nota completa.
   // Aqui garantimos que o conteúdo seja carregado antes de navegar.
 
   useEffect(() => {
@@ -644,7 +810,7 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
     async function abrirNota() {
       let nota = notaPendente
 
-      // ── Criar nota nova (vindo da BuscaTab: _criar: true) ──────────────────
+      // ── Criar nota nova (QuickSwitcher: _criar: true) ──────────────────────
       if (nota._criar && nota.titulo) {
         if (cancelled) return
         // Verifica no índice se já existe — se sim, navega; se não, cria
@@ -726,127 +892,115 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
         onNovoCaderno={novoCaderno}
         onDeletarCaderno={deletarCaderno}
         onDeletarNota={deletar}
+        onMoverNota={handleMoverNota}
+        notasPorCaderno={notasPorCaderno}
+        onCarregarCaderno={carregarCaderno}
+        width={sidebarWidth}
+        collapsed={sidebarCollapsed}
+        toggleCollapsed={toggleSidebar}
+        onResizeStart={onSidebarResize}
       />
 
       {/* Main area */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-surface dark:bg-surface-dark">
-
-        {/* Tab bar */}
-        <div className="flex items-center border-b border-ink/10 dark:border-ink-dark/10 bg-bg dark:bg-bg-dark shrink-0 h-9 px-1 gap-0.5">
-
-          {/* Back */}
-          <button
-            onClick={goBack}
-            disabled={!canGoBack}
-            title="Voltar"
-            className="w-7 h-7 flex items-center justify-center rounded hover:bg-ink/5 dark:hover:bg-ink-dark/5 disabled:opacity-25 disabled:cursor-not-allowed text-ink-3 dark:text-ink-dark3 transition-colors"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="15 18 9 12 15 6" />
-            </svg>
-          </button>
-
-          {/* Forward */}
-          <button
-            onClick={goForward}
-            disabled={!canGoForward}
-            title="Avançar"
-            className="w-7 h-7 flex items-center justify-center rounded hover:bg-ink/5 dark:hover:bg-ink-dark/5 disabled:opacity-25 disabled:cursor-not-allowed text-ink-3 dark:text-ink-dark3 transition-colors"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="9 18 15 12 9 6" />
-            </svg>
-          </button>
-
-          <div className="w-px h-4 bg-ink/10 dark:bg-ink-dark/10 mx-0.5 shrink-0" />
-
-          {/* Tabs */}
-          <div className="flex-1 flex items-center gap-0.5 overflow-x-auto min-w-0" style={{ scrollbarWidth: 'none' }}>
-            {tabs.map((tab, idx) => (
-              <div
-                key={tab.id}
-                onClick={() => switchTab(idx)}
-                className={`
-                  group flex items-center gap-1 px-2.5 h-7 rounded-md text-xs
-                  cursor-pointer select-none shrink-0 max-w-[180px] transition-colors
-                  ${idx === tabAtivaIdx
-                    ? 'bg-surface dark:bg-surface-dark text-ink dark:text-ink-dark font-medium'
-                    : 'text-ink-3 dark:text-ink-dark3 hover:bg-ink/5 dark:hover:bg-ink-dark/5'}
-                `}
-              >
-                <span className="truncate min-w-0 flex-1 font-[Georgia,serif]">
-                  {tab.nota?.titulo || 'Nova aba'}
-                </span>
-                {tabs.length > 1 && (
-                  <span
-                    onClick={e => closeTab(e, idx)}
-                    className="flex-shrink-0 w-3.5 h-3.5 flex items-center justify-center rounded opacity-0 group-hover:opacity-50 hover:!opacity-100 hover:bg-ink/10 dark:hover:bg-ink-dark/10 transition-opacity"
-                  >
-                    <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-                      <line x1="18" y1="6"  x2="6"  y2="18" />
-                      <line x1="6"  y1="6"  x2="18" y2="18" />
-                    </svg>
-                  </span>
-                )}
-              </div>
-            ))}
+      <div className="flex-1 flex flex-col overflow-hidden bg-bg dark:bg-bg-dark">
+        {/* Barra de navegação — transparente, flutuando sobre o editor */}
+        <div
+          className="flex items-center px-3 relative shrink-0"
+          style={{ height: window.electron ? '48px' : '36px', paddingTop: window.electron ? '12px' : '0', WebkitAppRegion: 'drag' }}
+        >
+          {/* Nav < > */}
+          <div style={{ WebkitAppRegion: 'no-drag', display: 'flex', gap: '2px', alignItems: 'center' }}>
+            <button
+              onClick={goBack}
+              disabled={!canGoBack}
+              style={{ background: 'transparent', border: 'none', cursor: canGoBack ? 'pointer' : 'default', color: '#3d3d3a', fontSize: '16px', lineHeight: 1, padding: '2px 4px', borderRadius: '3px', opacity: canGoBack ? 1 : 0.3 }}
+              onMouseEnter={e => { if (canGoBack) e.currentTarget.style.color = '#888' }}
+              onMouseLeave={e => { e.currentTarget.style.color = '#3d3d3a' }}
+            >&#8249;</button>
+            <button
+              onClick={goForward}
+              disabled={!canGoForward}
+              style={{ background: 'transparent', border: 'none', cursor: canGoForward ? 'pointer' : 'default', color: '#3d3d3a', fontSize: '16px', lineHeight: 1, padding: '2px 4px', borderRadius: '3px', opacity: canGoForward ? 1 : 0.3 }}
+              onMouseEnter={e => { if (canGoForward) e.currentTarget.style.color = '#888' }}
+              onMouseLeave={e => { e.currentTarget.style.color = '#3d3d3a' }}
+            >&#8250;</button>
           </div>
 
-          {/* Save status indicator */}
-          {saveStatus !== 'idle' && (
-            <span className={`text-[10px] px-1.5 shrink-0 transition-opacity ${
-              saveStatus === 'saving' ? 'text-ink-3 dark:text-ink-dark3 opacity-70' :
-              saveStatus === 'saved'  ? 'text-green-600 dark:text-green-400' :
-              'text-red-500 dark:text-red-400'
-            }`}>
-              {saveStatus === 'saving' ? '•••' : saveStatus === 'saved' ? '✓' : '⚠ erro ao salvar'}
-            </span>
+          {/* Breadcrumb — centralizado */}
+          {notaAtiva && (
+            <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none' }}>
+              <span style={{ fontSize: '11px', color: '#4a4a4a', userSelect: 'none' }}>
+                {notaAtiva.caderno && <>{notaAtiva.caderno}{notaAtiva.subpasta ? ` / ${notaAtiva.subpasta}` : ''}  /  </>}
+                {notaAtiva.titulo}
+              </span>
+            </div>
           )}
 
-          {/* Add tab */}
-          <button
-            onClick={addTab}
-            title="Nova aba"
-            className="ml-0.5 w-7 h-7 flex items-center justify-center rounded hover:bg-ink/5 dark:hover:bg-ink-dark/5 text-ink-3 dark:text-ink-dark3 transition-colors shrink-0"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="12" y1="5"  x2="12" y2="19" />
-              <line x1="5"  y1="12" x2="19" y2="12" />
-            </svg>
-          </button>
+          <div style={{ flex: 1 }} />
 
-          {/* Journal entry (nota diária) */}
-          <button
-            onClick={criarNotaDiaria}
-            title="Nota do dia"
-            className="ml-0.5 w-7 h-7 flex items-center justify-center rounded hover:bg-accent/10 dark:hover:bg-accent-dark/10 text-accent dark:text-accent-dark transition-colors shrink-0"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="4" width="18" height="18" rx="2" />
-              <line x1="16" y1="2" x2="16" y2="6" />
-              <line x1="8"  y1="2" x2="8"  y2="6" />
-              <line x1="3"  y1="10" x2="21" y2="10" />
-              <circle cx="12" cy="16" r="1.5" fill="currentColor" stroke="none" />
-            </svg>
-          </button>
+          {/* Save status + Outline toggle */}
+          <div style={{ WebkitAppRegion: 'no-drag', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            {saveStatus !== 'idle' && (
+              <span className={`text-[10px] px-1.5 shrink-0 ${
+                saveStatus === 'saving' ? 'opacity-50' : saveStatus === 'saved' ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'
+              }`} style={{ color: saveStatus === 'saving' ? '#4a4a4a' : undefined }}>
+                {saveStatus === 'saving' ? '•••' : saveStatus === 'saved' ? '✓' : '⚠'}
+              </span>
+            )}
+            <NoteActionsMenu
+              nota={notaAtiva}
+              cadernos={cadernos}
+              vaultPath={vaultPath}
+              onRename={handleMenuRename}
+              onMove={handleMenuMove}
+              onDelete={handleMenuDelete}
+              onOpenExternal={handleMenuOpenExternal}
+            />
+            <button
+              onClick={() => setOutlineOpen(o => !o)}
+              title="Índice da nota"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                color: outlineOpen ? '#e8a44a' : '#3d3d3a',
+                padding: '2px',
+                borderRadius: '3px',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+              onMouseEnter={e => { if (!outlineOpen) e.currentTarget.style.color = '#888' }}
+              onMouseLeave={e => { if (!outlineOpen) e.currentTarget.style.color = '#3d3d3a' }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="7" y1="12" x2="21" y2="12" />
+                <line x1="11" y1="18" x2="21" y2="18" />
+              </svg>
+            </button>
+          </div>
         </div>
 
-        {/* Editor */}
+        {/* Editor + Outline */}
         {notaAtiva ? (
-          <NoteEditorCM
-            key={navKey}
-            nota={notaAtiva}
-            textura={textura}
-            editorRef={editorRef}
-            backlinks={backlinks}
-            getSuggestions={getSuggestions}
-            onTituloChange={titulo => atualizarNotaAtiva({ titulo })}
-            onConteudoChange={markdown => {
-              foiEditadaRef.current = true
-              atualizarNotaAtiva({ _rawMarkdown: markdown, conteudo: null })
-            }}
-            onWikiLinkClick={handleWikiLinkClick}
-          />
+          <div className="flex-1 flex min-w-0 overflow-hidden">
+            <NoteEditorCM
+              key={navKey}
+              nota={notaAtiva}
+              textura={textura}
+              editorRef={editorRef}
+              cmViewRef={cmViewRef}
+              backlinks={backlinks}
+              getSuggestions={getSuggestions}
+              onTituloChange={titulo => atualizarNotaAtiva({ titulo })}
+              onConteudoChange={markdown => {
+                foiEditadaRef.current = true
+                atualizarNotaAtiva({ _rawMarkdown: markdown, conteudo: null })
+              }}
+              onWikiLinkClick={handleWikiLinkClick}
+            />
+            <OutlinePanel cmViewRef={cmViewRef} isOpen={outlineOpen} />
+          </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-3">
             <p className="text-ink-3 dark:text-ink-dark3 text-sm">Nenhuma nota selecionada</p>

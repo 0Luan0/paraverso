@@ -1,78 +1,9 @@
 /**
  * markdownUtils.js
- * - markdownParaHtml(md)          → HTML string para TipTap insertContent/setContent
+ * - markdownParaTipTapJson(md)    → TipTap JSON (legado, usado por vaultFs para carregar notas)
+ * - tiptapJsonParaMarkdown(json)  → Markdown string (legado, fallback no save)
  * - parseObsidianFrontmatter(raw) → { meta, body } de arquivos Obsidian
- * - tiptapJsonParaMarkdown(json)  → Markdown string a partir de TipTap JSON doc
  */
-
-// Escapa HTML e aplica formatação inline (bold, italic, code, strike)
-function inlineFormat(text) {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/__(.*?)__/g, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-    .replace(/_(.*?)_/g, '<em>$1</em>')
-    .replace(/~~(.*?)~~/g, '<s>$1</s>')
-    .replace(/`(.*?)`/g, '<code>$1</code>')
-}
-
-export function markdownParaHtml(md) {
-  if (!md || !md.trim()) return '<p></p>'
-
-  const lines = md.split('\n')
-  const parts = []
-  let inUl = false
-  let inOl = false
-
-  const closeList = () => {
-    if (inUl) { parts.push('</ul>'); inUl = false }
-    if (inOl) { parts.push('</ol>'); inOl = false }
-  }
-
-  for (const line of lines) {
-    const isUl = /^[-*+] /.test(line)
-    const isOl = /^\d+\. /.test(line)
-
-    if (!isUl && inUl) { parts.push('</ul>'); inUl = false }
-    if (!isOl && inOl) { parts.push('</ol>'); inOl = false }
-
-    if (/^### /.test(line)) {
-      closeList()
-      parts.push(`<h3>${inlineFormat(line.slice(4))}</h3>`)
-    } else if (/^## /.test(line)) {
-      closeList()
-      parts.push(`<h2>${inlineFormat(line.slice(3))}</h2>`)
-    } else if (/^# /.test(line)) {
-      closeList()
-      parts.push(`<h1>${inlineFormat(line.slice(2))}</h1>`)
-    } else if (/^> /.test(line)) {
-      closeList()
-      parts.push(`<blockquote><p>${inlineFormat(line.slice(2))}</p></blockquote>`)
-    } else if (/^---+$/.test(line.trim())) {
-      closeList()
-      parts.push('<hr>')
-    } else if (isUl) {
-      if (!inUl) { parts.push('<ul>'); inUl = true }
-      parts.push(`<li><p>${inlineFormat(line.replace(/^[-*+] /, ''))}</p></li>`)
-    } else if (isOl) {
-      if (!inOl) { parts.push('<ol>'); inOl = true }
-      parts.push(`<li><p>${inlineFormat(line.replace(/^\d+\. /, ''))}</p></li>`)
-    } else if (line.trim() === '') {
-      closeList()
-      // empty lines between paragraphs — just skip, TipTap handles spacing
-    } else {
-      parts.push(`<p>${inlineFormat(line)}</p>`)
-    }
-  }
-
-  if (inUl) parts.push('</ul>')
-  if (inOl) parts.push('</ol>')
-
-  return parts.join('') || '<p></p>'
-}
 
 // ── Markdown → TipTap JSON ────────────────────────────────────────────────────
 //
@@ -416,25 +347,3 @@ export function parseObsidianFrontmatter(raw) {
   return { meta, body }
 }
 
-/**
- * normalizeWikiLinksToText(json)
- *
- * Converte nós legados {type: 'wikilink', attrs: {titulo}} no TipTap JSON
- * para nós de texto puro {type: 'text', text: '[[titulo]]'}.
- *
- * Necessário para backward-compat com documentos salvos antes da migração
- * para o decoration approach (onde wikilinks são sempre texto puro).
- */
-export function normalizeWikiLinksToText(json) {
-  if (!json || typeof json !== 'object') return json
-  if (Array.isArray(json)) return json.map(normalizeWikiLinksToText)
-
-  // Converte nó wikilink → texto puro
-  if (json.type === 'wikilink' || json.type === 'wikiLink') {
-    return { type: 'text', text: `[[${json.attrs?.titulo || ''}]]` }
-  }
-
-  const result = { ...json }
-  if (result.content) result.content = result.content.map(normalizeWikiLinksToText)
-  return result
-}

@@ -1,9 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-
-const NOMES_MES = [
-  'Janeiro','Fevereiro','Março','Abril','Maio','Junho',
-  'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'
-]
+import { NOMES_MES } from '../../lib/mesUtils'
 
 function ResumoModal({ mesObj, onClose, onSave }) {
   const [texto, setTexto] = useState(mesObj.resumo || '')

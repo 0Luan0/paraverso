@@ -3,24 +3,11 @@ import { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY
 import { select } from 'd3-selection'
 import { zoom as d3Zoom, zoomIdentity } from 'd3-zoom'
 import { drag as d3Drag } from 'd3-drag'
-import { getTodasNotas } from '../../db/index'
+import { getNotasParaGrafo } from '../../db/index'
 import { useVault } from '../../contexts/VaultContext'
 
 const COR_PADRAO = 'rgba(200,190,175,0.85)'
 
-// ── Extrai wikilinks do markdown raw ──
-const wikilinkRe = /\[\[([^\]]+)\]\]/g
-function extrairWikilinks(rawMarkdown) {
-  if (!rawMarkdown) return []
-  const links = []
-  let m
-  while ((m = wikilinkRe.exec(rawMarkdown)) !== null) {
-    const titulo = m[1].split('|')[0].normalize('NFC').toLowerCase()
-    if (titulo) links.push(titulo)
-  }
-  wikilinkRe.lastIndex = 0
-  return links
-}
 
 // ── Config padrão ──
 const DEFAULT_CONFIG = {
@@ -28,8 +15,8 @@ const DEFAULT_CONFIG = {
   labelSize: 9,
   linkWidth: 0.4,
   linkOpacity: 0.08,
-  repulsion: -60,
-  linkDistance: 60,
+  repulsion: -300,
+  linkDistance: 120,
   gravity: 0.12,
   showLabels: true,
   colorByCaderno: true,
@@ -44,7 +31,7 @@ function ConfigSlider({ label, value, min, max, step, onChange, dark }) {
       <input
         type="range" min={min} max={max} step={step} value={value}
         onChange={e => onChange(parseFloat(e.target.value))}
-        style={{ flex: 1, accentColor: dark ? '#D4924A' : '#C17A3A', height: 3 }}
+        style={{ flex: 1, accentColor: dark ? '#e8a44a' : '#c17a3a', height: 3 }}
       />
       <span style={{ fontSize: 9, minWidth: 22, textAlign: 'right', opacity: 0.6 }}>{value}</span>
     </div>
@@ -57,7 +44,7 @@ function ConfigToggle({ label, checked, onChange, dark }) {
     <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, fontSize: 10, cursor: 'pointer' }}>
       <span>{label}</span>
       <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)}
-        style={{ accentColor: dark ? '#D4924A' : '#C17A3A' }} />
+        style={{ accentColor: dark ? '#e8a44a' : '#c17a3a' }} />
     </label>
   )
 }
@@ -171,7 +158,7 @@ function GrupoItem({ grupo, cadernos, onUpdate, onRemove }) {
                 onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
               >
-                <span style={{ color: '#D4924A', fontSize: 11, fontWeight: 600 }}>{op.label}</span>
+                <span style={{ color: '#e8a44a', fontSize: 11, fontWeight: 600 }}>{op.label}</span>
                 <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10, marginLeft: 4 }}>{op.desc}</span>
               </div>
             ))}
@@ -310,7 +297,7 @@ export function GraphTab({ dark }) {
 
     async function construirGrafo() {
       setLoading(true)
-      const notas = await getTodasNotas()
+      const notas = await getNotasParaGrafo()
       if (cancelled) return
 
       if (notas.length === 0) {
@@ -330,7 +317,7 @@ export function GraphTab({ dark }) {
       const vistas = new Set()
 
       notas.forEach(nota => {
-        extrairWikilinks(nota._rawMarkdown).forEach(titulo => {
+        ;(nota.wikilinks ?? []).forEach(titulo => {
           const alvoId = tituloPorId[titulo]
           if (alvoId && alvoId !== nota.id) {
             const chave = [nota.id, alvoId].sort().join('__')
@@ -361,11 +348,14 @@ export function GraphTab({ dark }) {
           const q = grupo.query
           let match = false
           if (q.startsWith('path:')) {
-            const termo = q.slice(5).toLowerCase()
-            match = nota.caderno?.toLowerCase().includes(termo)
+            const termo = q.slice(5).toLowerCase().trim()
+            const path = (nota.fullPath || nota.caderno || '').toLowerCase()
+            match = path.includes(termo)
           } else if (q.startsWith('section:')) {
-            const termo = q.slice(8).toLowerCase()
-            match = nota.titulo?.toLowerCase().includes(termo)
+            const termo = q.slice(8).toLowerCase().trim()
+            // Colorir notas que LINKAM para o alvo (têm [[alvo]] no conteúdo)
+            match = nota.wikilinks?.some(link => link.includes(termo)) ||
+                    nota.titulo?.toLowerCase().includes(termo)
           } else {
             const termo = q.toLowerCase()
             match = nota.caderno?.toLowerCase().includes(termo) ||
@@ -375,16 +365,23 @@ export function GraphTab({ dark }) {
         }
         return COR_PADRAO
       }
-      const simNodes = notas.map(nota => ({
-        id: nota.id,
-        titulo: nota.titulo,
-        caderno: nota.caderno,
-        tags: nota.tags || [],
-        conexoes: conexoes[nota.id] || 0,
-        cor: corDoNo(nota),
-        editadaEm: nota.editadaEm,
-        isIsolado: (conexoes[nota.id] || 0) === 0,
-      }))
+      const simNodes = notas.map(nota => {
+        // Path completo: caderno/subpasta (para match com path:)
+        const fullPath = nota.subpasta ? `${nota.caderno}/${nota.subpasta}` : nota.caderno
+        return {
+          id: nota.id,
+          titulo: nota.titulo,
+          caderno: nota.caderno,
+          subpasta: nota.subpasta || null,
+          fullPath,
+          tags: nota.tags || [],
+          conexoes: conexoes[nota.id] || 0,
+          cor: corDoNo({ ...nota, fullPath }),
+          editadaEm: nota.editadaEm,
+          isIsolado: (conexoes[nota.id] || 0) === 0,
+          wikilinks: nota.wikilinks ?? [],
+        }
+      })
 
       // Filtrar isolados se necessário + filtrar links correspondentes
       const filteredNodes = config.showIsolados ? simNodes : simNodes.filter(d => !d.isIsolado)
@@ -394,11 +391,14 @@ export function GraphTab({ dark }) {
         .map(l => ({ ...l })) // clone para d3 não mutar rawLinks
 
       graphDataRef.current = { simNodes: filteredNodes, simLinks, adjacency, rawLinks }
-      // Sugestões para autocomplete: cadernos + títulos únicos
-      const sugestoes = [...new Set([
-        ...simNodes.map(n => n.caderno).filter(Boolean),
-        ...simNodes.map(n => n.titulo).filter(Boolean),
-      ])].sort()
+      // Sugestões para autocomplete: cadernos + paths completos + títulos
+      const todasSugestoes = new Set()
+      simNodes.forEach(n => {
+        if (n.caderno) todasSugestoes.add(n.caderno)
+        if (n.fullPath && n.fullPath !== n.caderno) todasSugestoes.add(n.fullPath)
+        if (n.titulo) todasSugestoes.add(n.titulo)
+      })
+      const sugestoes = [...todasSugestoes].sort()
       cadernosRef.current = sugestoes
       setListaCadernos(sugestoes)
       setStats({ notas: notas.length, arestas: simLinks.length })
@@ -417,9 +417,10 @@ export function GraphTab({ dark }) {
           const k = transform?.k ?? 1
           gEl.selectAll('text.label, text.label-halo')
             .style('opacity', (d) => {
-              const minK = 0.5 - (d.conexoes ?? 0) * 0.02
-              if (k < minK) return 0
-              if (k < minK + 0.3) return (k - minK) / 0.3
+              const conn = d.conexoes ?? 0
+              const minZoom = Math.max(0.15, 0.6 - conn * 0.025)
+              if (k < minZoom) return 0
+              if (k < minZoom + 0.2) return (k - minZoom) / 0.2
               return 1
             })
         }
@@ -446,7 +447,7 @@ export function GraphTab({ dark }) {
         .data(simLinks)
         .enter().append('line')
         .attr('class', 'edge')
-        .style('stroke', `rgba(255,252,245,${config.linkOpacity})`)
+        .style('stroke', 'rgba(180,170,155,0.08)')
         .style('stroke-width', config.linkWidth)
 
       // Nós (grupo com círculo + label)
@@ -454,34 +455,32 @@ export function GraphTab({ dark }) {
         .data(filteredNodes, d => d.id)
         .enter().append('g')
         .attr('class', 'node')
-        .style('cursor', 'grab')
+        .style('cursor', 'pointer')
 
       nodeSel.append('circle')
         .attr('r', d => config.nodeSize + Math.sqrt(d.conexoes) * 1.2)
-        .style('fill', d => d.cor)
+        .style('fill', d => d.cor || 'rgba(155,148,138,0.85)')
         .style('opacity', d => d.isIsolado ? 0.4 : 1)
 
       if (config.showLabels && filteredNodes.length <= LABEL_THRESHOLD) {
-        // Halo (contorno escuro atrás do texto para contraste)
         nodeSel.append('text')
           .attr('class', 'label-halo')
           .text(d => d.titulo)
           .attr('dy', d => config.nodeSize + Math.sqrt(d.conexoes) * 1.2 + config.labelSize + 2)
           .attr('text-anchor', 'middle')
           .style('font-size', config.labelSize + 'px')
-          .style('stroke', 'rgba(15,13,10,0.9)')
+          .style('stroke', 'rgba(10,9,8,0.85)')
           .style('stroke-width', 3)
           .style('fill', 'none')
           .style('pointer-events', 'none')
           .style('font-family', 'inherit')
-        // Label real
         nodeSel.append('text')
           .attr('class', 'label')
           .text(d => d.titulo)
           .attr('dy', d => config.nodeSize + Math.sqrt(d.conexoes) * 1.2 + config.labelSize + 2)
           .attr('text-anchor', 'middle')
           .style('font-size', config.labelSize + 'px')
-          .style('fill', 'rgba(255,252,245,0.75)')
+          .style('fill', 'rgba(200,192,178,0.6)')
           .style('pointer-events', 'none')
           .style('font-family', 'inherit')
       }
@@ -490,31 +489,38 @@ export function GraphTab({ dark }) {
       linkSelRef.current = linkSel
       nodeSelRef.current = nodeSel
 
-      // ── Hover highlight ────────────────────────────────────────────────────
+      // ── Hover highlight (transições suaves) ─────────────────────────────
       nodeSel
-        .on('mouseenter', (event, d) => {
+        .on('mouseenter', function(event, d) {
           if (isDragging.current) return
           const vizinhos = adjacency.get(d.id)
-          nodeSel.style('opacity', n => {
-            if (n.id === d.id || vizinhos?.has(n.id)) return 1
-            return n.isIsolado ? 0.05 : 0.15
-          })
-          linkSel.style('opacity', l => {
-            const sId = typeof l.source === 'object' ? l.source.id : l.source
-            const tId = typeof l.target === 'object' ? l.target.id : l.target
-            return (sId === d.id || tId === d.id) ? 1 : 0.05
-          })
-          linkSel.style('stroke', l => {
-            const sId = typeof l.source === 'object' ? l.source.id : l.source
-            const tId = typeof l.target === 'object' ? l.target.id : l.target
-            if (sId === d.id || tId === d.id) return 'rgba(255,252,245,0.45)'
-            return `rgba(255,252,245,${config.linkOpacity})`
-          })
-          linkSel.style('stroke-width', l => {
-            const sId = typeof l.source === 'object' ? l.source.id : l.source
-            const tId = typeof l.target === 'object' ? l.target.id : l.target
-            return (sId === d.id || tId === d.id) ? 1.5 : config.linkWidth
-          })
+          // Escala o nó hovereado
+          select(this).select('circle').transition().duration(150)
+            .attr('r', (config.nodeSize + Math.sqrt(d.conexoes) * 1.2) * 1.3)
+          // Dim nós com transição
+          nodeSel.transition().duration(150)
+            .style('opacity', n => {
+              if (n.id === d.id) return 1
+              if (vizinhos?.has(n.id)) return 0.9
+              return 0.08
+            })
+          // Edges com transição — conectadas ficam vermelhas
+          linkSel.transition().duration(150)
+            .style('stroke', l => {
+              const sId = typeof l.source === 'object' ? l.source.id : l.source
+              const tId = typeof l.target === 'object' ? l.target.id : l.target
+              return (sId === d.id || tId === d.id) ? '#e05c5c' : 'rgba(180,170,155,0.03)'
+            })
+            .style('stroke-opacity', l => {
+              const sId = typeof l.source === 'object' ? l.source.id : l.source
+              const tId = typeof l.target === 'object' ? l.target.id : l.target
+              return (sId === d.id || tId === d.id) ? 1 : 0.1
+            })
+            .style('stroke-width', l => {
+              const sId = typeof l.source === 'object' ? l.source.id : l.source
+              const tId = typeof l.target === 'object' ? l.target.id : l.target
+              return (sId === d.id || tId === d.id) ? config.linkWidth * 2 : config.linkWidth
+            })
           // Label on hover for many nodes
           if (config.showLabels && filteredNodes.length > LABEL_THRESHOLD) {
             if (select(event.currentTarget).select('text.hover-label').empty()) {
@@ -525,39 +531,45 @@ export function GraphTab({ dark }) {
                 .attr('dy', base + config.labelSize + 2)
                 .attr('text-anchor', 'middle')
                 .style('font-size', config.labelSize + 'px')
-                .style('fill', 'rgba(255,252,245,0.9)')
+                .style('fill', 'rgba(220,215,205,1.0)')
                 .style('pointer-events', 'none')
             }
           }
         })
-        .on('mouseleave', () => {
+        .on('mouseleave', function(event, d) {
           if (isDragging.current) return
-          nodeSel.style('opacity', d => d.isIsolado ? 0.4 : 1)
-          linkSel.style('opacity', 1)
-          linkSel.style('stroke', `rgba(255,252,245,${config.linkOpacity})`)
-          linkSel.style('stroke-width', config.linkWidth)
+          // Volta ao tamanho normal
+          select(this).select('circle').transition().duration(150)
+            .attr('r', d => config.nodeSize + Math.sqrt(d.conexoes) * 1.2)
+          // Volta tudo ao normal
+          nodeSel.transition().duration(200)
+            .style('opacity', n => n.isIsolado ? 0.4 : 1)
+          linkSel.transition().duration(200)
+            .style('stroke', 'rgba(180,170,155,0.08)')
+            .style('stroke-opacity', 1)
+            .style('stroke-width', config.linkWidth)
           g.selectAll('text.hover-label').remove()
         })
 
       // Click no fundo fecha painel
       select(svgRef.current).on('click.deselect', () => setNotaSelecionada(null))
 
-      // ── Double click: liberar nó fixado ────────────────────────────────────
+      // ── Double click: liberar nó imediatamente ──────────────────────────
       nodeSel.on('dblclick', (event, d) => {
         event.stopPropagation()
         d.fx = null
         d.fy = null
-        fixedNodesRef.current.delete(d.id)
         if (simRef.current) simRef.current.alpha(0.3).restart()
       })
 
       // ── Drag nativo d3 (com distinção clique vs drag) ─────────────────────
       let dragMoved = false
       const drag = d3Drag()
-        .on('start', (event, d) => {
+        .on('start', function(event, d) {
           dragMoved = false
           isDragging.current = true
-          if (!event.active) simRef.current?.alphaTarget(0.3).restart()
+          select(this).style('cursor', 'grabbing')
+          if (!event.active) simRef.current?.alphaTarget(0.4).restart()
           d.fx = d.x
           d.fy = d.y
         })
@@ -566,30 +578,77 @@ export function GraphTab({ dark }) {
           d.fx = event.x
           d.fy = event.y
         })
-        .on('end', (event, d) => {
+        .on('end', function(event, d) {
           isDragging.current = false
+          select(this).style('cursor', 'pointer')
           if (!event.active) simRef.current?.alphaTarget(0)
-          d.fx = d.x
-          d.fy = d.y
-          fixedNodesRef.current.add(d.id)
-          // Se não moveu = foi clique = abre nota na aba Notas
+          // Se não moveu = foi clique = abre nota
           if (!dragMoved) {
+            d.fx = null
+            d.fy = null
             window.dispatchEvent(new CustomEvent('paraverso:abrir-em-notas', {
               detail: { nota: { id: d.id, titulo: d.titulo, caderno: d.caderno } }
             }))
+          } else {
+            // Libera imediatamente — física reintegra ao cluster com fluidez
+            d.fx = null
+            d.fy = null
+            simRef.current?.alpha(0.15).restart()
           }
         })
       nodeSel.call(drag)
 
-      // ── Force simulation ──────────────────────────────────────────────────
+      // ── Pré-posicionar nós em círculo (evita flick ao abrir) ─────────────
+      const w = containerRef.current?.offsetWidth ?? 800
+      const h = containerRef.current?.offsetHeight ?? 600
+      const total = filteredNodes.length
+      filteredNodes.forEach((n, i) => {
+        const angle = (i / total) * 2 * Math.PI
+        const radius = Math.min(w, h) * 0.25
+        n.x = Math.cos(angle) * radius
+        n.y = Math.sin(angle) * radius
+      })
+
+      // Zoom inicial sem animação (centro)
+      if (zoomRef.current && svgRef.current) {
+        select(svgRef.current).call(
+          zoomRef.current.transform,
+          zoomIdentity.translate(w / 2, h / 2).scale(1)
+        )
+      }
+
+      // ── Force simulation (Obsidian-like) ─────────────────────────────────
       const sim = forceSimulation(filteredNodes)
-        .force('link', forceLink(simLinks).id(d => d.id).distance(config.linkDistance).strength(0.3))
-        .force('charge', forceManyBody().strength(config.repulsion))
+        .force('link', forceLink(simLinks).id(d => d.id)
+          .distance(config.linkDistance)
+          .strength(d => {
+            const sc = (typeof d.source === 'object' ? d.source.conexoes : 0) ?? 0
+            const tc = (typeof d.target === 'object' ? d.target.conexoes : 0) ?? 0
+            return 0.3 + Math.min(Math.max(sc, tc), 15) * 0.02
+          })
+        )
+        .force('charge', forceManyBody()
+          .strength(config.repulsion)
+          .distanceMax(400)
+          .distanceMin(10)
+        )
         .force('x', forceX(0).strength(config.gravity))
         .force('y', forceY(0).strength(config.gravity))
         .force('collide', forceCollide(d => config.nodeSize + Math.sqrt(d.conexoes ?? 0) * 1.2 + 2))
-        .alphaDecay(0.02)
-        .velocityDecay(0.3)
+        .force('gravity', alpha => {
+          // Força que aumenta com distância — nós longe são puxados mais forte
+          filteredNodes.forEach(n => {
+            if (n.fx != null) return
+            const dx = -n.x
+            const dy = -n.y
+            const dist = Math.sqrt(dx * dx + dy * dy)
+            const str = alpha * 0.008 * (dist / 100)
+            n.vx += dx * str
+            n.vy += dy * str
+          })
+        })
+        .alphaDecay(0.028)
+        .velocityDecay(0.55)
 
       sim.on('tick', () => {
         if (cancelled) return
@@ -604,24 +663,27 @@ export function GraphTab({ dark }) {
       sim.on('end', () => {
         if (cancelled) return
         updateLabelVisibilityRef.current?.(null)
+        // Fit view suave após simulation estabilizar
+        const xs = filteredNodes.map(n => n.x)
+        const ys = filteredNodes.map(n => n.y)
+        const minX = Math.min(...xs), maxX = Math.max(...xs)
+        const minY = Math.min(...ys), maxY = Math.max(...ys)
+        const gw = maxX - minX || 1, gh = maxY - minY || 1
+        const pad = 60
+        const scale = Math.min((w - pad * 2) / gw, (h - pad * 2) / gh, 1.5)
+        const tx = w / 2 - (minX + gw / 2) * scale
+        const ty = h / 2 - (minY + gh / 2) * scale
+        if (zoomRef.current && svgRef.current) {
+          select(svgRef.current).transition().duration(600).call(
+            zoomRef.current.transform,
+            zoomIdentity.translate(tx, ty).scale(scale)
+          )
+        }
       })
 
       simRef.current = sim
       setLoading(false)
-
-      // Aplicar visibilidade de labels com o transform atual
       updateLabelVisibilityRef.current?.(null)
-
-      // Centralizar zoom após simulation estabilizar um pouco
-      setTimeout(() => {
-        if (cancelled || !zoomRef.current || !svgRef.current) return
-        const w = containerRef.current?.offsetWidth ?? 800
-        const h = containerRef.current?.offsetHeight ?? 600
-        select(svgRef.current).transition().duration(300).call(
-          zoomRef.current.transform,
-          zoomIdentity.translate(w / 2, h / 2).scale(0.8)
-        )
-      }, 200)
     }
 
     construirGrafo()
@@ -647,7 +709,7 @@ export function GraphTab({ dark }) {
       .attr('dy', d => config.nodeSize + Math.sqrt(d.conexoes) * 1.2 + config.labelSize + 2)
 
     // Atualizar edges
-    const corAresta = `rgba(255,252,245,${config.linkOpacity})`
+    const corAresta = `rgba(180,170,155,${config.linkOpacity})`
     linkSel
       .style('stroke', corAresta)
       .style('stroke-width', config.linkWidth)
@@ -684,14 +746,15 @@ export function GraphTab({ dark }) {
     }
   }, [])
 
-  const bgColor = dark ? '#1A1812' : '#F2EDE4'
+  const bgColor = dark ? '#1a1a1a' : '#F2EDE4'
   const panelStyle = {
-    background: dark ? '#221E16' : '#FAF6EF',
-    border: `0.5px solid ${dark ? '#3A3428' : '#D5CFC4'}`,
+    background: dark ? '#1c1c1c' : '#FAF6EF',
+    border: `0.5px solid ${dark ? '#2a2a2a' : '#D5CFC4'}`,
     borderRadius: 8,
     fontSize: 11,
-    color: dark ? '#A89880' : '#6B5E4A',
+    color: dark ? '#888880' : '#6B5E4A',
   }
+  const topOffset = window.electron ? 48 : 12
 
   // SVG está SEMPRE presente — sem early return antes do JSX principal
   return (
@@ -703,14 +766,14 @@ export function GraphTab({ dark }) {
           {/* Loading text dentro do SVG */}
           {loading && (
             <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle"
-              style={{ fill: dark ? '#A89880' : '#6B5E4A', fontSize: 14 }}>
+              style={{ fill: dark ? '#888880' : '#6B5E4A', fontSize: 14 }}>
               Construindo grafo…
             </text>
           )}
           {/* Empty state */}
           {!loading && stats.notas === 0 && (
             <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle"
-              style={{ fill: dark ? '#A89880' : '#6B5E4A', fontSize: 13 }}>
+              style={{ fill: dark ? '#888880' : '#6B5E4A', fontSize: 13 }}>
               Nenhuma nota ainda. Use [[wikilinks]] para conectar notas.
             </text>
           )}
@@ -718,7 +781,7 @@ export function GraphTab({ dark }) {
 
         {/* Busca + Config — posicionados absolutos sobre o SVG */}
         {!loading && stats.notas > 0 && (
-          <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+          <div style={{ position: 'absolute', top: topOffset, right: 12, zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
             <div style={{ ...panelStyle, padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 6 }}>
               <input
                 type="text"
@@ -730,7 +793,7 @@ export function GraphTab({ dark }) {
                   background: 'transparent',
                   border: 'none',
                   outline: 'none',
-                  color: dark ? '#EDE8DF' : '#1A1A18',
+                  color: dark ? '#d4cfc9' : '#1A1A18',
                   fontSize: 11,
                   width: 120,
                 }}
@@ -738,7 +801,7 @@ export function GraphTab({ dark }) {
               {buscaQuery && (
                 <button
                   onClick={() => setBuscaQuery('')}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: dark ? '#A89880' : '#6B5E4A', fontSize: 11 }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: dark ? '#888880' : '#6B5E4A', fontSize: 11 }}
                 >
                   ✕
                 </button>
@@ -747,7 +810,7 @@ export function GraphTab({ dark }) {
                 onClick={() => setConfigOpen(v => !v)}
                 style={{
                   background: 'none', border: 'none', cursor: 'pointer',
-                  color: configOpen ? (dark ? '#D4924A' : '#C17A3A') : (dark ? '#A89880' : '#6B5E4A'),
+                  color: configOpen ? (dark ? '#e8a44a' : '#c17a3a') : (dark ? '#888880' : '#6B5E4A'),
                   fontSize: 13, lineHeight: 1, padding: '0 2px',
                 }}
                 title="Configurações do grafo"
@@ -776,7 +839,7 @@ export function GraphTab({ dark }) {
                 </ConfigSection>
 
                 <ConfigSection title="Física" open={openSections.fisica} onToggle={() => setOpenSections(s => ({ ...s, fisica: !s.fisica }))}>
-                  <ConfigSlider label="Repulsão" value={config.repulsion} min={-200} max={-5} step={5} onChange={v => updateConfig('repulsion', v)} dark={dark} />
+                  <ConfigSlider label="Repulsão" value={config.repulsion} min={-500} max={-10} step={10} onChange={v => updateConfig('repulsion', v)} dark={dark} />
                   <ConfigSlider label="Distância" value={config.linkDistance} min={20} max={300} step={10} onChange={v => updateConfig('linkDistance', v)} dark={dark} />
                   <ConfigSlider label="Gravidade" value={config.gravity} min={0} max={1} step={0.05} onChange={v => updateConfig('gravity', Math.round(v * 100) / 100)} dark={dark} />
                 </ConfigSection>
@@ -819,9 +882,9 @@ export function GraphTab({ dark }) {
 
         {/* Legenda + stats */}
         {!loading && stats.notas > 0 && (
-          <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 10 }}>
+          <div style={{ position: 'absolute', top: topOffset, left: 12, zIndex: 10 }}>
             <div style={{ ...panelStyle, padding: '8px 12px' }}>
-              <div style={{ marginBottom: 6, fontWeight: 500, color: dark ? '#EDE8DF' : '#1A1A18', fontSize: 12 }}>
+              <div style={{ marginBottom: 6, fontWeight: 500, color: dark ? '#d4cfc9' : '#1A1A18', fontSize: 12 }}>
                 {stats.notas} nota{stats.notas !== 1 ? 's' : ''}
                 {stats.arestas > 0 && ` · ${stats.arestas} ligaç${stats.arestas !== 1 ? 'ões' : 'ão'}`}
               </div>
@@ -841,7 +904,7 @@ export function GraphTab({ dark }) {
 
       {/* painel da nota selecionada */}
       {notaSelecionada && (
-        <div className="w-60 flex-shrink-0 border-l border-bdr dark:border-bdr-dark bg-surface dark:bg-surface-dark flex flex-col p-4 gap-3 overflow-auto">
+        <div className="w-60 flex-shrink-0 bg-surface dark:bg-surface-dark flex flex-col p-4 gap-3 overflow-auto">
           <div className="flex items-start justify-between gap-2">
             <h3 className="font-serif text-base font-medium text-ink dark:text-ink-dark leading-snug">
               {notaSelecionada.titulo}

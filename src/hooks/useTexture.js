@@ -16,5 +16,12 @@ export function useTexture() {
     })
   }
 
-  return { textura, cycleTextura }
+  function setTexturaTo(value) {
+    if (TEXTURAS.includes(value)) {
+      setTextura(value)
+      localStorage.setItem('paraverso-textura', value)
+    }
+  }
+
+  return { textura, cycleTextura, setTexturaTo }
 }

@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld('electron', {
   deleteFile: (filePath) =>
     ipcRenderer.invoke('fs:deleteFile', filePath),
 
+  openPath: (filePath) =>
+    ipcRenderer.invoke('shell:openPath', filePath),
+
   // ── Dialog ───────────────────────────────────────────────────────────────
   openFolder: () =>
     ipcRenderer.invoke('dialog:openFolder'),

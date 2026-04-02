@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { getMes, salvarMes } from '../../db/index'
 import { useVault } from '../../contexts/VaultContext'
 import { RegistroDiario } from './RegistroDiario'
@@ -6,11 +6,7 @@ import { MetasMes } from './MetasMes'
 import { ResumoMes } from './ResumoMes'
 import { StatBar } from './StatBar'
 import { HabitoSetupModal } from './HabitoSetupModal'
-
-const NOMES_MES = [
-  'Janeiro','Fevereiro','Março','Abril','Maio','Junho',
-  'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'
-]
+import { NOMES_MES } from '../../lib/mesUtils'
 
 export function MesTab() {
   const { vaultPath } = useVault()
@@ -20,7 +16,12 @@ export function MesTab() {
   const [mesObj, setMesObj] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showHabitoSetup, setShowHabitoSetup] = useState(false)
-  const [saveTimer, setSaveTimer] = useState(null)
+  const saveTimer = useRef(null)
+
+  // Cleanup do timer ao desmontar
+  useEffect(() => {
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current) }
+  }, [])
 
   // Re-runs when vault becomes available OR when navigating months
   useEffect(() => {
@@ -34,12 +35,11 @@ export function MesTab() {
   // auto-save com debounce
   const salvarComDebounce = useCallback((novo) => {
     setMesObj(novo)
-    if (saveTimer) clearTimeout(saveTimer)
-    const timer = setTimeout(() => {
+    clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => {
       salvarMes(novo)
     }, 600)
-    setSaveTimer(timer)
-  }, [saveTimer])
+  }, [])
 
   function navMes(delta) {
     let m = mesAtual + delta
@@ -51,10 +51,14 @@ export function MesTab() {
   }
 
   function salvarHabitos(habitos) {
-    // ao mudar hábitos, resetar os valores dos hábitos dos dias
+    // Mapeia por nome para preservar dados ao reordenar/remover/adicionar hábitos
+    const habitosAntigos = mesObj.habitos
     const dias = mesObj.dias.map(d => ({
       ...d,
-      habitos: habitos.map((_, i) => d.habitos[i] ?? 0)
+      habitos: habitos.map(nomeNovo => {
+        const idxAntigo = habitosAntigos.indexOf(nomeNovo)
+        return idxAntigo !== -1 ? (d.habitos[idxAntigo] ?? 0) : 0
+      })
     }))
     salvarComDebounce({ ...mesObj, habitos, dias })
   }

@@ -24,18 +24,17 @@ const SKIP_DIRS = new Set([
  * com o caderno correspondente (nome da pasta de primeiro nível).
  * Ignora pastas ocultas e de assets.
  */
-async function scanObsidianVault(folderPath, cadernoHint = null, depth = 0) {
+async function scanObsidianVault(folderPath, cadernoHint = null, subpastaHint = null, depth = 0) {
   const allEntries  = await el().readdir(folderPath)
   const dirEntries  = await el().readdir(folderPath, { dirsOnly: true })
   const dirSet      = new Set(dirEntries)
 
-  // Arquivos .md na pasta atual
   const mdFiles = allEntries.filter(e => !dirSet.has(e) && e.toLowerCase().endsWith('.md'))
   const results = []
 
   for (const file of mdFiles) {
     const filePath = await el().joinPath(folderPath, file)
-    results.push({ filePath, caderno: cadernoHint || 'Notas' })
+    results.push({ filePath, caderno: cadernoHint || 'Notas', subpasta: subpastaHint })
   }
 
   // Recursão em subpastas (máximo 3 níveis)
@@ -43,9 +42,10 @@ async function scanObsidianVault(folderPath, cadernoHint = null, depth = 0) {
     for (const dir of dirEntries) {
       if (dir.startsWith('.') || SKIP_DIRS.has(dir) || SKIP_DIRS.has(dir.toLowerCase())) continue
       const subPath = await el().joinPath(folderPath, dir)
-      // O caderno é sempre o nome da pasta de PRIMEIRO nível
       const caderno = depth === 0 ? dir : cadernoHint
-      const sub     = await scanObsidianVault(subPath, caderno, depth + 1)
+      // Subpasta: a partir do depth 1, acumula o caminho relativo
+      const subpasta = depth === 0 ? null : (subpastaHint ? subpastaHint + '/' + dir : dir)
+      const sub = await scanObsidianVault(subPath, caderno, depth >= 1 ? (subpasta ?? dir) : null, depth + 1)
       results.push(...sub)
     }
   }
@@ -68,7 +68,7 @@ function yamlStr(s) {
  * - Preserva `criadaEm` original ao sobrescrever
  * Retorna: { status: 'imported' | 'skipped' | 'error', titulo }
  */
-async function importarArquivo(filePath, caderno, vaultPath, { sobrescrever = false } = {}) {
+async function importarArquivo(filePath, caderno, vaultPath, { sobrescrever = false, subpasta = null } = {}) {
   try {
     const raw = await el().readFile(filePath)
 
@@ -109,7 +109,11 @@ async function importarArquivo(filePath, caderno, vaultPath, { sobrescrever = fa
     // ── Verifica se já existe (por path) ───────────────────────────────────
     const cadernoDir = sanitizeName(caderno)
     const filename   = sanitizeName(titulo)
-    const newPath    = await el().joinPath(vaultPath, cadernoDir, filename + '.md')
+    // Preserva subpasta se existir (ex: "TikTok" dentro de "04 - Projetos")
+    const destDir    = subpasta
+      ? await el().joinPath(vaultPath, cadernoDir, subpasta)
+      : await el().joinPath(vaultPath, cadernoDir)
+    const newPath    = await el().joinPath(destDir, filename + '.md')
     const jaExiste   = await el().exists(newPath)
 
     if (jaExiste && !sobrescrever) return { status: 'skipped', titulo }
@@ -174,7 +178,7 @@ const ATALHOS = [
 
 // ── Componente principal ───────────────────────────────────────────────────────
 
-export function ConfigTab() {
+export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
   const { vaultPath, changeVault } = useVault()
 
   // Obsidian import states
@@ -209,10 +213,18 @@ export function ConfigTab() {
   // Gerenciador de templates
   const [templatesList, setTemplatesList]     = useState([])
   const [templateEditando, setTemplateEditando] = useState(null)
+
+  // Timer refs para cleanup de "saved" feedback
+  const feedbackTimers = useRef([])
+  useEffect(() => {
+    return () => feedbackTimers.current.forEach(t => clearTimeout(t))
+  }, [])
   const [templateNovo, setTemplateNovo]       = useState(false)
   const [templateNome, setTemplateNome]       = useState('')
   const [templateConteudo, setTemplateConteudo] = useState('')
   const [templateSaving, setTemplateSaving]   = useState(false)
+
+
 
   useEffect(() => {
     getCadernos().then(lista => setCadernos(lista)).catch(() => {})
@@ -242,14 +254,14 @@ export function ConfigTab() {
     setDefaultCaderno(nome)
     await window.electron?.setConfig('defaultCaderno', nome)
     setSavedCaderno(true)
-    setTimeout(() => setSavedCaderno(false), 1500)
+    feedbackTimers.current.push(setTimeout(() => setSavedCaderno(false), 1500))
   }
 
   async function salvarJournalCaderno(nome) {
     setJournalCaderno(nome)
     await window.electron?.setConfig('journalCaderno', nome)
     setSavedJournal(true)
-    setTimeout(() => setSavedJournal(false), 1500)
+    feedbackTimers.current.push(setTimeout(() => setSavedJournal(false), 1500))
   }
 
   async function salvarTemplatesDir(nome) {
@@ -257,7 +269,7 @@ export function ConfigTab() {
     setTemplatesDir(nome)
     await window.electron?.setConfig('templatesDir', nome)
     setSavedTemplates(true)
-    setTimeout(() => setSavedTemplates(false), 1500)
+    feedbackTimers.current.push(setTimeout(() => setSavedTemplates(false), 1500))
   }
 
   // ── Gerenciador de templates ──────────────────────────────────────────────
@@ -351,12 +363,12 @@ export function ConfigTab() {
     for (let i = 0; i < arquivos.length; i++) {
       if (abortRef.current) break
 
-      const { filePath, caderno } = arquivos[i]
+      const { filePath, caderno, subpasta } = arquivos[i]
       const nomeArquivo = filePath.split(/[/\\]/).pop()
       setArquivoAtual(nomeArquivo)
       setProgresso(i + 1)
 
-      const resultado = await importarArquivo(filePath, caderno, vaultPath, { sobrescrever })
+      const resultado = await importarArquivo(filePath, caderno, vaultPath, { sobrescrever, subpasta })
       if (resultado.status === 'imported') importados++
       else if (resultado.status === 'skipped') ignorados++
       else erros.push(resultado)
@@ -410,7 +422,7 @@ export function ConfigTab() {
       }
       setDadosLimpos(true)
       setConfirmLimpar(false)
-      setTimeout(() => setDadosLimpos(false), 3000)
+      feedbackTimers.current.push(setTimeout(() => setDadosLimpos(false), 3000))
     } catch (err) {
       console.error('Erro ao limpar dados:', err)
     } finally {
@@ -430,6 +442,76 @@ export function ConfigTab() {
         <p className="text-sm text-ink-3 dark:text-ink-dark3 mb-10">
           Personalize o Paraverso e gerencie seus dados.
         </p>
+
+        {/* ── Seção: Aparência ─────────────────────────────────────────── */}
+        <section className="bg-surface dark:bg-surface-dark border border-bdr dark:border-bdr-dark rounded-xl p-6 mb-6">
+          <div className="flex items-start gap-3 mb-4">
+            <div className="w-8 h-8 rounded-lg bg-accent/10 dark:bg-accent-dark/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent dark:text-accent-dark">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-base font-medium text-ink dark:text-ink-dark">Aparência</h2>
+              <p className="text-sm text-ink-3 dark:text-ink-dark3 mt-0.5">Tema e textura de fundo do editor.</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {/* Tema */}
+            <div>
+              <label className="text-sm text-ink-2 dark:text-ink-dark2 mb-1.5 block">Tema</label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { if (dark) toggleTheme() }}
+                  className={`text-sm px-4 py-1.5 rounded-lg border transition-colors ${
+                    !dark
+                      ? 'border-accent dark:border-accent-dark text-accent dark:text-accent-dark bg-accent/10 dark:bg-accent-dark/10'
+                      : 'border-bdr dark:border-bdr-dark text-ink-3 dark:text-ink-dark3 hover:text-ink dark:hover:text-ink-dark'
+                  }`}
+                >Claro</button>
+                <button
+                  onClick={() => { if (!dark) toggleTheme() }}
+                  className={`text-sm px-4 py-1.5 rounded-lg border transition-colors ${
+                    dark
+                      ? 'border-accent dark:border-accent-dark text-accent dark:text-accent-dark bg-accent/10 dark:bg-accent-dark/10'
+                      : 'border-bdr dark:border-bdr-dark text-ink-3 dark:text-ink-dark3 hover:text-ink dark:hover:text-ink-dark'
+                  }`}
+                >Escuro</button>
+              </div>
+            </div>
+
+            {/* Textura */}
+            <div>
+              <label className="text-sm text-ink-2 dark:text-ink-dark2 mb-1.5 block">Textura do editor</label>
+              <div className="flex gap-2">
+                {[
+                  { value: 'none', label: 'Nenhuma' },
+                  { value: 'dots', label: 'Pontilhado' },
+                  { value: 'grid', label: 'Grade' },
+                ].map(t => (
+                  <button
+                    key={t.value}
+                    onClick={() => setTexturaTo(t.value)}
+                    className={`text-sm px-4 py-1.5 rounded-lg border transition-colors ${
+                      textura === t.value
+                        ? 'border-accent dark:border-accent-dark text-accent dark:text-accent-dark bg-accent/10 dark:bg-accent-dark/10'
+                        : 'border-bdr dark:border-bdr-dark text-ink-3 dark:text-ink-dark3 hover:text-ink dark:hover:text-ink-dark'
+                    }`}
+                  >{t.label}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
 
         {/* ── Seção: Importar do Obsidian ────────────────────────────────── */}
         <section className="bg-surface dark:bg-surface-dark border border-bdr dark:border-bdr-dark rounded-xl p-6 mb-6">

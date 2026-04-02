@@ -15,8 +15,6 @@ export function TopBar({ dark, toggleTheme, textura = 'none', cycleTextura }) {
     <div
       className="flex items-center justify-between h-11 bg-bg-2 dark:bg-bg-dark2 border-b border-bdr dark:border-bdr-dark flex-shrink-0"
       style={{
-        // no Electron: padding-left de 80px para dar espaço aos botões do macOS
-        // a barra toda vira área de arrasto (drag) da janela
         paddingLeft: isElectron ? '80px' : '20px',
         paddingRight: '20px',
         WebkitAppRegion: isElectron ? 'drag' : 'auto',

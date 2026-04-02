@@ -1,6 +1,7 @@
 const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const fsp = fs.promises
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -10,17 +11,41 @@ function getConfigPath() {
   return path.join(app.getPath('userData'), 'config.json')
 }
 
-function loadConfig() {
+async function loadConfig() {
   try {
-    const raw = fs.readFileSync(getConfigPath(), 'utf-8')
+    const raw = await fsp.readFile(getConfigPath(), 'utf-8')
     return JSON.parse(raw)
   } catch {
     return {}
   }
 }
 
-function saveConfig(obj) {
-  fs.writeFileSync(getConfigPath(), JSON.stringify(obj, null, 2), 'utf-8')
+async function saveConfig(obj) {
+  await fsp.writeFile(getConfigPath(), JSON.stringify(obj, null, 2), 'utf-8')
+}
+
+// ── Config lock — serializa escritas para evitar read-modify-write race ──────
+let configLock = Promise.resolve()
+
+// ── Path validation — impede acesso fora do vault ────────────────────────────
+function getVaultPath() {
+  try {
+    const raw = fs.readFileSync(getConfigPath(), 'utf-8')
+    return JSON.parse(raw).vaultPath || null
+  } catch {
+    return null
+  }
+}
+
+function validatePath(filePath) {
+  const vaultPath = getVaultPath()
+  if (!vaultPath) throw new Error('Nenhum vault configurado')
+  const resolved = path.resolve(filePath)
+  const resolvedVault = path.resolve(vaultPath)
+  if (!resolved.startsWith(resolvedVault + path.sep) && resolved !== resolvedVault) {
+    throw new Error(`Path fora do vault: acesso negado — ${resolved}`)
+  }
+  return resolved
 }
 
 // ── Window ────────────────────────────────────────────────────────────────────
@@ -31,10 +56,11 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     titleBarStyle: 'hiddenInset',
-    backgroundColor: '#1A1812',
+    backgroundColor: '#1a1a1a',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      webSecurity: true,
       preload: path.join(__dirname, 'preload.cjs'),
     },
   })
@@ -82,19 +108,29 @@ function registerIpcHandlers() {
   // ── File System ─────────────────────────────────────────────────────────────
 
   ipcMain.handle('fs:readFile', async (_e, filePath) => {
-    return fs.readFileSync(filePath, 'utf-8')
+    try {
+      validatePath(filePath)
+      return await fsp.readFile(filePath, 'utf-8')
+    } catch (err) {
+      throw new Error(`fs:readFile falhou: ${err.message}`)
+    }
   })
 
   ipcMain.handle('fs:writeFile', async (_e, filePath, content) => {
-    // ensure parent directory exists
-    fs.mkdirSync(path.dirname(filePath), { recursive: true })
-    fs.writeFileSync(filePath, content, 'utf-8')
-    return true
+    try {
+      validatePath(filePath)
+      await fsp.mkdir(path.dirname(filePath), { recursive: true })
+      await fsp.writeFile(filePath, content, 'utf-8')
+      return true
+    } catch (err) {
+      throw new Error(`fs:writeFile falhou: ${err.message}`)
+    }
   })
 
   ipcMain.handle('fs:readdir', async (_e, dirPath, opts = {}) => {
     try {
-      const dirents = fs.readdirSync(dirPath, { withFileTypes: true })
+      validatePath(dirPath)
+      const dirents = await fsp.readdir(dirPath, { withFileTypes: true })
       if (opts.dirsOnly) {
         // return only subdirectory names, skip hidden files/dirs (starting with .)
         return dirents
@@ -113,7 +149,8 @@ function registerIpcHandlers() {
   // This replaces the fragile multi-IPC recursive approach.
   ipcMain.handle('fs:readdirRecursive', async (_e, dirPath) => {
     try {
-      const entries = await fs.promises.readdir(dirPath, {
+      validatePath(dirPath)
+      const entries = await fsp.readdir(dirPath, {
         recursive: true,
         withFileTypes: true,
       })
@@ -134,26 +171,52 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('fs:mkdir', async (_e, dirPath) => {
-    fs.mkdirSync(dirPath, { recursive: true })
-    return true
+    try {
+      validatePath(dirPath)
+      await fsp.mkdir(dirPath, { recursive: true })
+      return true
+    } catch (err) {
+      throw new Error(`fs:mkdir falhou: ${err.message}`)
+    }
   })
 
   ipcMain.handle('fs:exists', async (_e, filePath) => {
-    return fs.existsSync(filePath)
+    try {
+      validatePath(filePath)
+      await fsp.access(filePath)
+      return true
+    } catch {
+      return false
+    }
   })
 
   ipcMain.handle('fs:rename', async (_e, oldPath, newPath) => {
-    fs.mkdirSync(path.dirname(newPath), { recursive: true })
-    fs.renameSync(oldPath, newPath)
-    return true
+    try {
+      validatePath(oldPath)
+      validatePath(newPath)
+      await fsp.mkdir(path.dirname(newPath), { recursive: true })
+      await fsp.rename(oldPath, newPath)
+      return true
+    } catch (err) {
+      throw new Error(`fs:rename falhou: ${err.message}`)
+    }
   })
 
   ipcMain.handle('fs:deleteFile', async (_e, filePath) => {
     try {
-      fs.unlinkSync(filePath)
+      validatePath(filePath)
+      await fsp.unlink(filePath)
       return true
     } catch {
       return false
+    }
+  })
+
+  ipcMain.handle('shell:openPath', async (_e, filePath) => {
+    try {
+      return await shell.openPath(filePath)
+    } catch (err) {
+      throw new Error(`shell:openPath falhou: ${err.message}`)
     }
   })
 
@@ -172,14 +235,20 @@ function registerIpcHandlers() {
   // ── Config ────────────────────────────────────────────────────────────────────
 
   ipcMain.handle('config:get', async (_e, key) => {
-    const cfg = loadConfig()
+    const cfg = await loadConfig()
     return cfg[key] ?? null
   })
 
   ipcMain.handle('config:set', async (_e, key, value) => {
-    const cfg = loadConfig()
-    cfg[key] = value
-    saveConfig(cfg)
+    // Serializa escritas via lock para evitar race condition read-modify-write
+    configLock = configLock.then(async () => {
+      const cfg = await loadConfig()
+      cfg[key] = value
+      await saveConfig(cfg)
+    }).catch(err => {
+      console.error('[config:set] erro:', err)
+    })
+    await configLock
     return true
   })
 

@@ -16,25 +16,29 @@ export function VaultProvider({ children }) {
 
   // On mount: restore vault path from electron config
   useEffect(() => {
+    let mounted = true
     async function check() {
       if (!window.electron) {
-        // Web mode — no vault, Dexie fallback
-        setLoading(false)
+        if (mounted) setLoading(false)
         return
       }
       const saved = await window.electron.getConfig('vaultPath')
+      if (!mounted) return
       if (saved) {
         const exists = await window.electron.exists(saved)
+        if (!mounted) return
         if (exists) {
           applyVaultPath(saved)
         }
       }
       // Carrega pasta de templates configurada
       const savedTemplatesDir = await window.electron.getConfig('templatesDir').catch(() => null)
+      if (!mounted) return
       if (savedTemplatesDir) setTemplatesDir(savedTemplatesDir)
       setLoading(false)
     }
     check()
+    return () => { mounted = false }
   }, [])
 
   const chooseVault = useCallback(async () => {

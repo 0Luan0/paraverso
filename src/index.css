@@ -18,8 +18,8 @@
   }
 
   body.dark {
-    background-color: #1A1812;
-    color: #EDE8DF;
+    background-color: #1a1a1a;
+    color: #d4cfc9;
   }
 
   #root {
@@ -62,7 +62,7 @@
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #C8BFA8; border-radius: 4px; }
-  .dark ::-webkit-scrollbar-thumb { background: #3A3428; }
+  .dark ::-webkit-scrollbar-thumb { background: #2a2a2a; }
 
   /* ── TipTap base ── */
   .tiptap {
@@ -177,7 +177,7 @@
     border-top: 1px solid #C8BFA8;
     margin: 1.5rem 0;
   }
-  .dark .tiptap hr { border-top-color: #3A3428; }
+  .dark .tiptap hr { border-top-color: #2a2a2a; }
 
   /* ── Código em bloco ── */
   .tiptap pre {

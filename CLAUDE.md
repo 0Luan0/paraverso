@@ -1,14 +1,13 @@
 # Paraverso — Contexto para Claude Code
 
 ## O que é
-App desktop Electron + React chamado **Paraverso** — caderno digital estilo Obsidian/Notion.
-Desktop-first. Stack: Electron 36, React + Vite, Tailwind CSS, TipTap v3, Dexie.js (IndexedDB), Supabase (futuro).
+App desktop Electron + React chamado **Paraverso** — caderno digital estilo Obsidian.
+Desktop-first. Stack: Electron 36, React 19 + Vite 8, Tailwind CSS 3, **CodeMirror 6** (editor), d3-force (grafo), Dexie.js (IndexedDB), Supabase (futuro).
 
 ## Como rodar
 ```bash
-npm run dev          # Vite (frontend)
-npm run electron     # Electron (em outra aba)
-# ou: npm run start  # ambos juntos se configurado
+npm run dev            # Vite (frontend) — porta 5173
+npm run electron:dev   # Vite + Electron juntos
 ```
 
 ## Estrutura principal
@@ -18,139 +17,176 @@ electron/
   preload.cjs    — contextBridge (window.electron)
 
 src/
-  App.jsx                          — roteamento entre as 4 abas
+  App.jsx                          — layout principal, 3 abas (Mês, Notas, Grafo, Config)
   db/index.js                      — camada de dados unificada (Dexie ou vault)
   lib/
-    vaultFs.js                     — operações de arquivo no vault (leitura/escrita de notas)
-    markdownUtils.js               — Markdown ↔ TipTap JSON
+    vaultFs.js                     — operações de arquivo no vault (leitura/escrita/mover notas)
+    markdownUtils.js               — Markdown ↔ TipTap JSON (legado, usado no save fallback)
+    templateUtils.js               — resolução de variáveis de template ({{date}}, {{Title}})
+    obsidianThemeParser.js         — parser de temas Obsidian (CSS e JSON)
+  hooks/
+    useTheme.js                    — dark/light mode + aplicação de CSS vars
+    useTexture.js                  — texturas de fundo (dots/grid)
   contexts/VaultContext.jsx        — path do vault selecionado
   components/
     notas/
-      NotasTab.jsx                 — ✅ REESCRITO — orquestrador principal das notas
-      NoteEditor.jsx               — ✅ REESCRITO — editor TipTap com backlinks
-      WikiLinkExtension.js         — extensão TipTap para [[wikilinks]]
-      HashtagExtension.js          — extensão TipTap para #hashtags
-      NotesSidebar.jsx             — sidebar (cadernos + lista de notas)
-      FindBar.jsx                  — Cmd+F search no editor
+      NotasTab.jsx                 — orquestrador principal das notas (921 linhas)
+      NoteEditorCM.jsx             — editor CodeMirror 6 com live preview
+      NotesSidebar.jsx             — sidebar (cadernos + busca + drag&drop)
       TemplateModal.jsx            — templates de nota (Cmd+T)
     mes/
       MesTab.jsx                   — ✅ FUNCIONANDO — aba mês (não mexa!)
     placeholders/
-      BuscaTab.jsx                 — ✅ FUNCIONANDO — busca full-text (não mexa!)
-      GraphTab.jsx                 — graph view (não implementado ainda)
-    QuickSwitcher.jsx              — Cmd+O para abrir notas rapidamente
+      GraphTab.jsx                 — graph view SVG + d3-force (926 linhas)
+    layout/
+      TopBar.jsx                   — barra superior (logo + tema + textura)
+      NavTabs.jsx                  — abas de navegação (Mês/Notas/Grafo/Config)
+    QuickSwitcher.jsx              — Cmd+O para abrir/criar notas
     config/
-      ConfigTab.jsx                — configurações: vault, caderno padrão, journal, templates, importação
+      ConfigTab.jsx                — configurações + importação Obsidian + aparência/temas
 ```
 
-## Arquitetura de notas (importante)
+## Editor (CodeMirror 6) — Migrado de TipTap
+
+O editor usa CodeMirror 6 com markdown puro (não WYSIWYG). Features:
+
+- **Live Preview**: `hideMarkdownPlugin` esconde `**`, `*`, `~~`, `#`, `` ` ``, `>` quando cursor não está na linha
+- **Syntax highlighting**: `HighlightStyle` com `tags.heading1-6`, `tags.strong`, `tags.emphasis`, etc.
+- **Tema dinâmico**: `Compartment` permite hot-swap de cores via `temaCompartment.reconfigure()`
+- **Wikilinks**: `wikilinkPlugin` (decoration) + click handler via DOM `classList.contains('cm-wikilink')`
+- **Hashtags**: `hashtagPlugin` (decoration com `.cm-hashtag`)
+- **Autocomplete [[**: `criarWikilinkCompletion()` com `@codemirror/autocomplete`
+- **Auto-close [[**: `wikilinkKeymap` insere `[[]]` ao digitar segundo `[`
+- **Backspace inteligente**: `[[]]` apaga os 4 chars juntos
+- **HR visual**: `hrPlugin` renderiza `---` como `<hr>` widget
+- **Tasks**: `taskPlugin` com `CheckboxWidget` (3 estados: [ ] [x] [/])
+- **Blockquote**: `blockquotePlugin` com borda esquerda accent
+
+### Save flow (markdown-first, sem round-trip)
+1. `onConteudoChange` recebe markdown string do CodeMirror
+2. `atualizarNotaAtiva({ _rawMarkdown: markdown, conteudo: null })`
+3. `salvarNotaVault` usa `_rawMarkdown` diretamente — zero conversão TipTap
+4. `foiEditadaRef` guard previne save de notas não editadas
+
+### Tema dinâmico do editor
+```js
+// Lê CSS vars em runtime
+getCoresDoTema() → { h1, h2, bold, italic, link, tag, codeBg, ... }
+
+// Cria tema com cores atuais
+criarTemaEditor(cores) → [syntaxHighlighting(...), EditorView.theme({...})]
+
+// Hot-swap via Compartment
+temaCompartment.reconfigure(criarTemaEditor(getCoresDoTema()))
+
+// Escuta mudanças de tema
+window.addEventListener('paraverso:tema-changed', handler)
+```
+
+## Sistema de temas
+
+### CSS Variables (index.css → :root)
+```
+--theme-bg, --theme-sidebar-bg, --theme-sidebar-hover, --theme-sidebar-active
+--theme-border, --theme-text, --theme-text-muted, --theme-accent
+--editor-h1..h4, --editor-bold, --editor-italic, --editor-link, --editor-tag, --editor-code-bg
+```
+
+### Fluxo de aplicação
+1. `useTheme.js` aplica vars base (dark/light) via `setProperty`
+2. Tema customizado do `localStorage('paraverso-tema-custom')` sobrescreve por cima
+3. Componentes usam classes `paraverso-sidebar`, `paraverso-topbar`, etc. com `!important`
+4. App.jsx root divs usam `style={{ backgroundColor: 'var(--theme-bg)' }}` inline
+5. Importar tema → `setProperty` → dispatch `paraverso:tema-changed` → CM reconfigura
+
+### Parser de temas (obsidianThemeParser.js)
+Suporta 3 formatos:
+- **Catppuccin/AnuPpuccin**: detecta `--ctp-base`, extrai paleta RGB dos fallbacks
+- **Obsidian padrão**: extrai de `.theme-dark` / `:root`
+- **Style Settings JSON**: mapeia chaves `Editor@@h1-color@@dark`
+
+## Graph View (SVG + d3-force)
+
+- SVG puro (sem React Flow) — zero conflito de coordenadas
+- d3-zoom para pan/zoom, d3-drag para arrastar nós
+- `getNotasParaGrafoVault()` com `Promise.all` para leitura paralela
+- Wikilinks pré-extraídos no vault scan (não faz round-trip)
+- Grupos de cor customizáveis com autocomplete de cadernos
+- Force simulation: forceLink, forceManyBody, forceX, forceY, forceCollide
+- Hover highlight com transições suaves (d3 transitions)
+- Config panel colapsável (nós, arestas, física, exibição, grupos)
+
+## Arquitetura de notas
 
 ### Vault Index (em memória)
-`NotasTab.jsx` mantém um `Map` construído via `getTodasNotasMetadata()` (lê só frontmatter, sem parsing de conteúdo). Wikilink click = lookup O(1), não scan de arquivos.
-
 ```js
-// buildVaultIndex() → Map<titulo_normalizado_NFC_lowercase, metadata>
-// Indexa por titulo E por _filename para cobrir acentos e variações
-vaultIndexRef.current.get('nome da nota')  // → { id, titulo, caderno, _filename }
+// Map<titulo_normalizado_NFC_lowercase, metadata>
+vaultIndexRef.current.get('nome da nota') // → { id, titulo, caderno, _filename }
 ```
 
-### Fluxo de wikilink click
-1. Extrai título (strip alias após `|`)
-2. Lookup O(1) no vault index
-3. Se não encontrado → rebuild index e tenta de novo
-4. Carrega apenas o caderno da nota encontrada
-5. Se não existe → cria nova nota
+### Navegação com histórico
+- `history = ['id1', 'id2', 'id3']` — array de IDs
+- `goBack()`/`goForward()` — busca nota por ID, suporta cross-caderno
+- `navigarPara(nota)` — push ID ao history, incrementa `navKey` para remount
 
 ### Formatos de arquivo suportados
 - **Paraverso nativo** (tem `id:` no frontmatter YAML) — formato primário
-- **Plain markdown** (sem frontmatter) — importado do Obsidian, tratado como leitura
+- **Plain markdown** (sem frontmatter) — importado do Obsidian
 - **Obsidian YAML** (frontmatter sem `id:`) — convertido ao salvar
 
 ### NFD/NFC (macOS critical)
-`dialog.showOpenDialog` retorna paths NFC, `fs.promises.readdir` pode retornar NFD.
 Toda comparação de path usa `.normalize('NFC')`. Ver `_topDir()` em vaultFs.js.
 
+## Sidebar
+
+- Cadernos com subpastas expansíveis
+- Busca inline com prefixes: `path:`, `file:`, `tag:`
+- Drag & drop para mover notas entre cadernos (`moverNotaVault`)
+- Pastas e subpastas iniciam fechadas
+- `notasPorCaderno` cache — expandir pasta carrega notas sem mudar caderno ativo
+- Chevron `>` só expande/recolhe — nome do caderno seleciona
+
+## Templates
+
+- Leitura direta de `.md` na pasta templates do vault
+- Inserção via `markdownParaTipTapJson` → `insertContent` no CodeMirror
+- Variáveis: `{{date}}`, `{{time}}`, `{{Title}}`, `{{title}}`
+- Gerenciador de templates inline no ConfigTab
+- Pasta templates filtrada da sidebar de notas
+
 ## IPC (main.cjs ↔ renderer via window.electron)
-Handlers registrados no main.cjs e expostos via preload.cjs:
 - `fs:readFile`, `fs:writeFile`, `fs:deleteFile`, `fs:exists`
 - `fs:readdir` (com opção `{ dirsOnly: true }`)
-- `fs:readdirRecursive` — lista todos `.md` recursivamente (requer restart do Electron após adicionar)
-- `fs:mkdir`, `fs:joinPath`
+- `fs:readdirRecursive`, `fs:mkdir`, `fs:joinPath`
 - `dialog:openFolder`
 
-## Paleta de cores (Tailwind custom)
-```
-bg / bg-dark          — fundo principal (#F2EDE4 / #1A1812)
-surface / surface-dark — superfície cards (#FAF6EF / #221E16)
-ink / ink-dark        — texto (#1A1A18 / #EDE8DF)
-accent / accent-dark  — laranja (#C17A3A / #D4924A)
-bdr / bdr-dark        — bordas sutis
-```
+## O que NÃO fazer
+- **Não mexa na Aba Mês** (`MesTab.jsx` e arquivos em `mes/`)
+- **Não substitua o vault index** por `getTodasNotas()` — era causa raiz de bugs
+- **Não use `invalidateIndex()` com `new Map()`** — limpar o mapa mata o autocomplete
+- **Não adicione `.dark` CSS vars no index.css** — `useTheme.js` gerencia via JS
+- **Não use HTML intermediário em templates** — markdown → TipTap JSON direto
 
 ## Status das features
 
 | Feature | Status | Notas |
 |---|---|---|
 | Aba Mês | ✅ Funcionando | NÃO MEXA |
-| Aba Busca | ✅ Funcionando | NÃO MEXA sem necessidade |
-| Editor de notas | ✅ Reescrito | TipTap v3, vault index |
-| Wikilinks [[nota]] | ✅ Corrigido | Vault index O(1), click via capture-phase DOM listener |
-| Wikilink autocomplete | ✅ Corrigido | Dropdown flip (abre acima quando sem espaço), só mostra com cursor no final |
-| Backlinks | ✅ Implementado | Lazy, painel no rodapé do editor |
-| QuickSwitcher (Cmd+O) | ✅ Funcionando | |
-| Importação Obsidian | ✅ Corrigido | Preserva ID, modo sobrescrever, subpastas |
-| Journal (nota diária) | ✅ Implementado | Botão calendário na tab bar + tela vazia, config de pasta em ConfigTab |
-| Templates folder | ✅ Corrigido | Pasta de templates agora aparece na sidebar |
-| Autosave | ✅ Corrigido | Usa notaAtivaRef (sync) para flush confiável no beforeunload |
-| Graph view | ❌ Adiado | |
+| Editor CodeMirror 6 | ✅ Funcionando | Live preview, temas dinâmicos |
+| Graph View (d3-force) | ✅ Funcionando | SVG + zoom/drag + grupos de cor |
+| Wikilinks [[nota]] | ✅ Funcionando | Click em `.cm-wikilink`, autocomplete |
+| Backlinks | ✅ Funcionando | Painel no rodapé do editor |
+| QuickSwitcher (Cmd+O) | ✅ Funcionando | Criar nota se não existe |
+| Busca na sidebar | ✅ Funcionando | Lupa + prefixes path:/file:/tag: |
+| Importação Obsidian | ✅ Funcionando | Preserva subpastas e IDs |
+| Templates | ✅ Funcionando | Gerenciador no ConfigTab |
+| Sistema de temas | ✅ Funcionando | CSS vars + parser Obsidian/Catppuccin |
+| Dark/Light toggle | ✅ Funcionando | Via CSS vars (useTheme.js) |
+| Drag & drop notas | ✅ Funcionando | Mover entre cadernos |
+| Autosave | ✅ Funcionando | Debounce 700ms + flush no unmount |
+| Nomes únicos | ✅ Funcionando | "Sem título 2", "Sem título 3" |
 | Sync Supabase | ❌ Fase 3 | |
 
-## O que NÃO fazer
-- **Não mexa na Aba Mês** (`MesTab.jsx` e arquivos em `mes/`) — funcionando perfeitamente
-- **Não mexa na Aba Busca** (`BuscaTab.jsx`) sem necessidade real
-- **Não substitua o vault index** por `getTodasNotas()` — era a causa raiz de todos os bugs de wikilink
-- **Não use `invalidateIndex()` com `new Map()`** — limpar o mapa mata o autocomplete. Usar `buildVaultIndex()` (rebuild em background sem limpar dados atuais)
-- **Não use CustomEvent para comunicação WikiLink→React** — usar callback direto via extension options (CustomEvent chain falhava silenciosamente)
-
-## Bugs corrigidos (importação Obsidian)
-1. `lerNotaVault` — `cadernoHint` agora tem prioridade sobre `frontmatter.caderno` (evita salvar na pasta errada)
-2. `getTodasNotasMetadataVault` — usa pasta real no disco, não `frontmatter.caderno`
-3. `importarArquivo` — preserva `id:` existente no frontmatter (evita duplicatas de ID)
-4. `deletarNotaVault` — agora usa `_getAllMdPaths` para encontrar notas em subpastas
-5. ConfigTab — botão "Sobrescrever notas existentes" para re-importação limpa
-6. ConfigTab — seção "Limpar todas as notas" para reset antes de re-importar
-
-## Bugs corrigidos (sessão 30/mar/2026)
-7. **Autocomplete desaparecia após ~700ms** — `invalidateIndex()` limpava o Map → autosave disparava → `getSuggestions()` retornava `[]`. Fix: `invalidateIndex()` agora chama `buildVaultIndex()` sem limpar
-8. **Conteúdo perdido ao reiniciar** — `beforeunload` capturava `notaAtiva` (React state async) via closure stale. Fix: `notaAtivaRef` (useRef sync) atualizado antes do setState
-9. **Dropdown não fechava ao selecionar** — `command()` setava `sugg.active=false` mas não chamava `ext.onSuggestionExit()`. Fix: adicionado `ext.onSuggestionExit()` em `command()`
-10. **Click em [[link]] inseria cursor** — `handleMouseDown` do ProseMirror recebe `(view, event)` (2 args, não 3). Abordagem final: capture-phase DOM listener (`addEventListener('mousedown', handler, true)`) + callback direto `onWikiLinkClick` via extension options
-11. **Autocomplete abria no meio de [[link]]** — `getSuggMatch()` não verificava posição do cursor. Fix: checa `textAfter` — se há texto entre cursor e `]]`, retorna null
-12. **Dropdown autocomplete saía da tela** — posição fixa `coords.bottom + 6`. Fix: `WikiLinkDropdown` detecta espaço disponível e faz flip para cima se necessário
-13. **Pasta de templates não aparecia na sidebar** — `getCadernosVault` filtrava `configuredTemplatesDir`. Fix: removido filtro
-
-## Arquitetura do WikiLinkExtension (importante)
-
-O `WikiLinkExtension.js` é uma extensão TipTap complexa. Pontos-chave para quem for mexer:
-
-- **Decorations**: wikilinks são texto puro `[[...]]` estilizado via `Decoration.inline` quando cursor está fora. Cursor dentro → texto editável sem decoração.
-- **Autocomplete**: `getSuggMatch()` detecta `[[query` no texto. Só sugere se cursor está no final do conteúdo (antes de `]]` ou sem `]]` ainda). Objeto `sugg` é compartilhado no escopo de `addProseMirrorPlugins()`.
-- **Click handler**: usa `addEventListener('mousedown', handler, true)` (capture phase no DOM) — ProseMirror `handleMouseDown` e `handleClick` não funcionavam. O handler chama `onWikiLinkClick` (callback direto via extension options).
-- **Dropdown flip**: `WikiLinkDropdown` em NoteEditor.jsx mede viewport e faz flip para cima quando sem espaço abaixo.
-
-## Journal (nota diária)
-
-- **Botão**: ícone de calendário na tab bar (ao lado do "+") e na tela vazia
-- **Função**: `criarNotaDiaria()` em NotasTab.jsx
-- **Nome**: `"30 março 2026"` (dia + mês por extenso + ano)
-- **Header H1**: `"Segunda, 30 de março de 2026"`
-- **Pasta destino**: configurável em ConfigTab → "Pasta para notas diárias" (`window.electron.getConfig('journalCaderno')`)
-- **Dedup**: verifica vault index antes de criar — se já existe, navega para ela
-
-## Próximos passos sugeridos
-1. Graph view (React Flow) — nós coloridos por caderno, tamanho proporcional a conexões
-2. Templates de página (já tem UI, falta popular com templates padrão)
-3. Sidebar com subpastas expansíveis (vault do usuário tem subpastas dentro dos cadernos)
-4. Tags (#tag) com visual distinto no editor (cor accent)
-5. PWA / modo offline completo
-6. Sync Supabase (Fase 3)
+## Branches
+- `main` — branch ativa de desenvolvimento
+- `backup-tiptap` — snapshot antes da migração TipTap → CodeMirror

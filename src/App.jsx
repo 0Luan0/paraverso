@@ -2,11 +2,9 @@ import { useState, useEffect } from 'react'
 import { useTheme } from './hooks/useTheme'
 import { useTexture } from './hooks/useTexture'
 import { VaultProvider, useVault } from './contexts/VaultContext'
-import { TopBar } from './components/layout/TopBar'
-import { NavTabs } from './components/layout/NavTabs'
+import ActivityBar from './components/layout/ActivityBar'
 import { MesTab } from './components/mes/MesTab'
 import { NotasTab } from './components/notas/NotasTab'
-import { BuscaTab } from './components/placeholders/BuscaTab'
 import { GraphTab } from './components/placeholders/GraphTab'
 import { ConfigTab } from './components/config/ConfigTab'
 import { QuickSwitcher } from './components/QuickSwitcher'
@@ -15,12 +13,15 @@ import { VaultSetup } from './components/VaultSetup'
 // ── Inner app — has access to VaultContext ────────────────────────────────────
 function AppInner() {
   const { dark, toggleTheme } = useTheme()
-  const { textura, cycleTextura } = useTexture()
+  const { textura, cycleTextura, setTexturaTo } = useTexture()
   const { vaultPath, loading } = useVault()
-  const [aba, setAba] = useState('mes')
+  const [aba, setAba] = useState('notas')
   const [quickSwitcher, setQuickSwitcher] = useState(false)
   const [notaPendente, setNotaPendente] = useState(null)
   const [notaAtivaId, setNotaAtivaId] = useState(null)
+
+  // Limpa tema customizado legado (se existir)
+  useEffect(() => { localStorage.removeItem('paraverso-tema-custom') }, [])
 
   // ── Atalhos globais de teclado ─────────────────────────────────────────────
   useEffect(() => {
@@ -58,7 +59,7 @@ function AppInner() {
     return () => window.removeEventListener('keydown', handleKey)
   }, [])
 
-  // ── Abre nota vinda do QuickSwitcher ou BuscaTab ─────────────────────────
+  // ── Abre nota vinda do QuickSwitcher ──────────────────────────────────────
   // Usa props (notaPendente) em vez de setTimeout+evento — sem race conditions.
   function handleAbrirNota(nota) {
     setNotaPendente(nota)
@@ -86,8 +87,15 @@ function AppInner() {
     return <VaultSetup />
   }
 
+  function handleNotaDia() {
+    setAba('notas')
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('paraverso:journal'))
+    }, 50)
+  }
+
   return (
-    <div className="h-screen flex flex-col bg-bg dark:bg-bg-dark overflow-hidden">
+    <div className="h-screen flex overflow-hidden" style={{ background: '#1a1a1a' }}>
       {/* Quick Switcher overlay (Cmd+O) */}
       {quickSwitcher && (
         <QuickSwitcher
@@ -96,23 +104,22 @@ function AppInner() {
         />
       )}
 
-      <TopBar
-        dark={dark}
-        toggleTheme={toggleTheme}
-        textura={textura}
-        cycleTextura={cycleTextura}
+      {/* Activity bar — coluna esquerda, 32px */}
+      <ActivityBar
+        abaAtiva={aba}
+        onAbaChange={setAba}
+        onNotaDia={handleNotaDia}
       />
-      <NavTabs aba={aba} setAba={setAba} />
 
-      <div className="flex-1 flex overflow-hidden">
+      {/* Conteúdo da aba ativa */}
+      <div className="flex-1 flex overflow-hidden min-w-0">
         {aba === 'mes'    && <MesTab />}
         {/* NotasTab mantido montado (display:none) para preservar estado ao trocar de aba */}
         <div style={{ display: aba === 'notas' ? 'contents' : 'none' }}>
           <NotasTab textura={textura} notaPendente={notaPendente} onNotaAberta={() => setNotaPendente(null)} onNotaAtiva={setNotaAtivaId} />
         </div>
-        {aba === 'busca'  && <BuscaTab />}
         {aba === 'grafo'  && <GraphTab dark={dark} />}
-        {aba === 'config' && <ConfigTab />}
+        {aba === 'config' && <ConfigTab dark={dark} toggleTheme={toggleTheme} textura={textura} setTexturaTo={setTexturaTo} />}
       </div>
     </div>
   )

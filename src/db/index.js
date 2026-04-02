@@ -9,6 +9,7 @@
 
 import Dexie from 'dexie'
 import * as vault from '../lib/vaultFs'
+import { mesId, criarMesVazio } from '../lib/mesUtils'
 
 // ── Dexie (IndexedDB) fallback ────────────────────────────────────────────────
 
@@ -35,35 +36,7 @@ function useVaultFs() {
   return isElectron() && !!_vaultPath
 }
 
-// ── Shared helpers ────────────────────────────────────────────────────────────
-
-export function mesId(ano, mes) {
-  return `${ano}-${String(mes).padStart(2, '0')}`
-}
-
-function criarMesVazio(ano, mes) {
-  const diasNoMes = new Date(ano, mes, 0).getDate()
-  const nomesDias = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S']
-
-  const dias = Array.from({ length: diasNoMes }, (_, i) => {
-    const n = i + 1
-    const data = new Date(ano, mes - 1, n)
-    return { n, letraDia: nomesDias[data.getDay()], memo: '', nota: '', habitos: [] }
-  })
-
-  return {
-    id: mesId(ano, mes),
-    ano,
-    mes,
-    habitos: ['Treino', 'Leitura', 'Foco', 'Bem-estar'],
-    dias,
-    metas: [
-      { id: crypto.randomUUID(), categoria: 'Leituras', itens: [] },
-      { id: crypto.randomUUID(), categoria: 'Projetos', itens: [] },
-    ],
-    resumo: '',
-  }
-}
+// mesId e criarMesVazio importados de ../lib/mesUtils
 
 // ── MESES ─────────────────────────────────────────────────────────────────────
 
@@ -106,6 +79,13 @@ export async function salvarNota(nota) {
   await db.notas.put(nota)
 }
 
+export async function moverNota(nota, novoCaderno) {
+  if (useVaultFs()) return vault.moverNotaVault(_vaultPath, nota, novoCaderno)
+  nota.caderno = novoCaderno
+  await db.notas.put(nota)
+  return nota
+}
+
 export async function deletarNota(id) {
   if (useVaultFs()) {
     const nota = await getNota(id)
@@ -120,15 +100,15 @@ export async function getNotasPorCaderno(caderno) {
   return db.notas.where('caderno').equals(caderno).reverse().sortBy('editadaEm')
 }
 
-export async function getTodasNotas() {
-  if (useVaultFs()) return vault.getTodasNotasVault(_vaultPath)
-  return db.notas.toArray()
-}
-
 /** Versão leve: só metadados, sem parsear conteúdo. Para o QuickSwitcher. */
 export async function getTodasNotasMetadata() {
   if (useVaultFs()) return vault.getTodasNotasMetadataVault(_vaultPath)
   // Dexie: notas não têm corpo pesado em memória, retorna direto
+  return db.notas.toArray()
+}
+
+export async function getNotasParaGrafo() {
+  if (useVaultFs()) return vault.getNotasParaGrafoVault(_vaultPath)
   return db.notas.toArray()
 }
 
