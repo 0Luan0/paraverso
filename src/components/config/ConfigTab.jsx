@@ -224,14 +224,6 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
   const [templateConteudo, setTemplateConteudo] = useState('')
   const [templateSaving, setTemplateSaving]   = useState(false)
 
-  // AI settings
-  const [aiEnabled, setAiEnabled]             = useState(false)
-  const [apiKey, setApiKey]                   = useState('')
-  const [apiKeyMasked, setApiKeyMasked]       = useState(true)
-  const [apiKeySaved, setApiKeySaved]         = useState(false)
-  const [aiInitialized, setAiInitialized]     = useState(false)
-  const [aiInitializing, setAiInitializing]   = useState(false)
-
   useEffect(() => {
     getCadernos().then(lista => setCadernos(lista)).catch(() => {})
     window.electron?.getConfig('defaultCaderno').then(v => {
@@ -255,56 +247,6 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
       .then(dirs => setTopDirs((dirs || []).filter(d => !d.startsWith('.') && d !== '_machine')))
       .catch(() => {})
   }, [vaultPath])
-
-  // Load AI settings on mount
-  useEffect(() => {
-    el()?.getConfig('aiEnabled').then(v => {
-      if (v) setAiEnabled(true)
-    }).catch(() => {})
-    el()?.ai?.getApiKey().then(key => {
-      if (key) setApiKey(key)
-    }).catch(() => {})
-  }, [])
-
-  async function toggleAi(enable) {
-    setAiEnabled(enable)
-    await el()?.setConfig('aiEnabled', enable)
-    if (enable && vaultPath && !aiInitialized) {
-      setAiInitializing(true)
-      try {
-        const result = await el()?.machineContext?.init(vaultPath)
-        setAiInitialized(true)
-        if (result?.created) {
-          console.log('[AI] Hemisfério Máquina criado em:', result.path)
-        }
-      } catch (err) {
-        console.error('[AI] Erro ao inicializar:', err)
-      } finally {
-        setAiInitializing(false)
-      }
-    }
-  }
-
-  async function salvarApiKey() {
-    if (!apiKey.trim()) return
-    try {
-      await el()?.ai?.saveApiKey(apiKey.trim())
-      setApiKeySaved(true)
-      feedbackTimers.current.push(setTimeout(() => setApiKeySaved(false), 1500))
-    } catch (err) {
-      console.error('[AI] Erro ao salvar API key:', err)
-    }
-  }
-
-  async function limparApiKey() {
-    try {
-      await el()?.ai?.deleteApiKey()
-      setApiKey('')
-      setApiKeySaved(false)
-    } catch (err) {
-      console.error('[AI] Erro ao limpar API key:', err)
-    }
-  }
 
   async function salvarDefaultCaderno(nome) {
     setDefaultCaderno(nome)
@@ -522,29 +464,6 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
           </div>
 
           <div className="space-y-4">
-            {/* Tema */}
-            <div>
-              <label className="text-sm text-ink-2 dark:text-ink-dark2 mb-1.5 block">Tema</label>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => { if (dark) toggleTheme() }}
-                  className={`text-sm px-4 py-1.5 rounded-lg border transition-colors ${
-                    !dark
-                      ? 'border-accent dark:border-accent-dark text-accent dark:text-accent-dark bg-accent/10 dark:bg-accent-dark/10'
-                      : 'border-bdr dark:border-bdr-dark text-ink-3 dark:text-ink-dark3 hover:text-ink dark:hover:text-ink-dark'
-                  }`}
-                >Claro</button>
-                <button
-                  onClick={() => { if (!dark) toggleTheme() }}
-                  className={`text-sm px-4 py-1.5 rounded-lg border transition-colors ${
-                    dark
-                      ? 'border-accent dark:border-accent-dark text-accent dark:text-accent-dark bg-accent/10 dark:bg-accent-dark/10'
-                      : 'border-bdr dark:border-bdr-dark text-ink-3 dark:text-ink-dark3 hover:text-ink dark:hover:text-ink-dark'
-                  }`}
-                >Escuro</button>
-              </div>
-            </div>
-
             {/* Textura */}
             <div>
               <label className="text-sm text-ink-2 dark:text-ink-dark2 mb-1.5 block">Textura do editor</label>
@@ -1010,111 +929,6 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
                 <button onClick={() => deletarTemplate(t.filename)} className="text-xs text-ink-3 dark:text-ink-dark3 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all px-2">Deletar</button>
               </div>
             ))}
-          </div>
-        </section>
-
-        {/* ── Seção: IA ─────────────────────────────────────────────────────── */}
-        <section className="bg-surface dark:bg-surface-dark border border-bdr dark:border-bdr-dark rounded-xl p-6 mb-6">
-          <div className="flex items-start gap-3 mb-4">
-            <div className="w-8 h-8 rounded-lg bg-accent/10 dark:bg-accent-dark/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent dark:text-accent-dark">
-                <path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/>
-                <path d="M16 14H8a4 4 0 0 0-4 4v2h16v-2a4 4 0 0 0-4-4z"/>
-                <circle cx="12" cy="5" r="1" fill="currentColor"/>
-              </svg>
-            </div>
-            <div>
-              <h2 className="text-base font-medium text-ink dark:text-ink-dark">Inteligência Artificial</h2>
-              <p className="text-sm text-ink-3 dark:text-ink-dark3 mt-0.5">
-                Ative o assistente de IA para pesquisa, brainstorm e escrita.
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            {/* Toggle IA */}
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-sm text-ink dark:text-ink-dark">Ativar IA</span>
-                {aiInitializing && (
-                  <span className="ml-2 text-xs text-ink-3 dark:text-ink-dark3">Inicializando...</span>
-                )}
-              </div>
-              <button
-                onClick={() => toggleAi(!aiEnabled)}
-                className={`relative w-10 h-5 rounded-full transition-colors ${
-                  aiEnabled
-                    ? 'bg-accent dark:bg-accent-dark'
-                    : 'bg-bdr dark:bg-bdr-dark'
-                }`}
-              >
-                <span
-                  className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-                    aiEnabled ? 'translate-x-5' : 'translate-x-0.5'
-                  }`}
-                />
-              </button>
-            </div>
-
-            {/* API Key */}
-            {aiEnabled && (
-              <div>
-                <label className="text-sm text-ink-2 dark:text-ink-dark2 mb-1.5 block">Chave de API (Anthropic)</label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <input
-                      type={apiKeyMasked ? 'password' : 'text'}
-                      value={apiKey}
-                      onChange={e => setApiKey(e.target.value)}
-                      placeholder="sk-ant-..."
-                      className="w-full bg-bg dark:bg-bg-dark border border-bdr dark:border-bdr-dark rounded-lg px-3 py-2 pr-10 text-sm text-ink dark:text-ink-dark font-mono placeholder:text-ink-3 dark:placeholder:text-ink-dark3 focus:outline-none focus:border-accent dark:focus:border-accent-dark transition-colors"
-                    />
-                    <button
-                      onClick={() => setApiKeyMasked(!apiKeyMasked)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-3 dark:text-ink-dark3 hover:text-ink dark:hover:text-ink-dark transition-colors"
-                      title={apiKeyMasked ? 'Revelar' : 'Ocultar'}
-                    >
-                      {apiKeyMasked ? (
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                          <circle cx="12" cy="12" r="3"/>
-                        </svg>
-                      ) : (
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
-                          <line x1="1" y1="1" x2="23" y2="23"/>
-                        </svg>
-                      )}
-                    </button>
-                  </div>
-                  <button
-                    onClick={salvarApiKey}
-                    disabled={!apiKey.trim()}
-                    className="text-xs px-3 py-2 rounded-lg bg-accent dark:bg-accent-dark text-white disabled:opacity-40 hover:opacity-90 transition-opacity"
-                  >
-                    Salvar
-                  </button>
-                  {apiKey && (
-                    <button
-                      onClick={limparApiKey}
-                      className="text-xs px-3 py-2 rounded-lg border border-red-500/30 dark:border-red-400/30 text-red-600 dark:text-red-400 hover:bg-red-500/8 transition-colors"
-                    >
-                      Limpar
-                    </button>
-                  )}
-                </div>
-                {apiKeySaved && (
-                  <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1 mt-1.5">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-                    Salva no keychain do sistema
-                  </span>
-                )}
-                <p className="text-xs text-ink-3 dark:text-ink-dark3 mt-2">
-                  A chave é armazenada de forma segura no keychain do sistema operacional.
-                  Nunca fica em arquivos de configuração.
-                </p>
-              </div>
-            )}
           </div>
         </section>
 

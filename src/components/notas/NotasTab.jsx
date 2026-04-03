@@ -104,6 +104,7 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
       const metadata = await getTodasNotasMetadata()
       const map = new Map()
       for (const nota of metadata) {
+        nota.hemisphere = 'human'
         const titleKey = nota.titulo?.normalize('NFC').toLowerCase()
         const fnKey    = nota._filename?.normalize('NFC').toLowerCase()
         // Título: só indexa se a chave ainda não existe (mais recente tem prioridade)
@@ -111,6 +112,32 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
         // Filename: sempre indexa (filename é único por definição)
         if (fnKey && fnKey !== titleKey) map.set(fnKey, nota)
       }
+
+      // Add machine hemisphere files to the index
+      try {
+        const machineFiles = await window.electron?.machineContext?.listFiles(vaultPath) || []
+        for (const fp of machineFiles) {
+          const filename = fp.split(/[/\\]/).pop().replace(/\.md$/i, '').normalize('NFC')
+          // Relative path from vault root, e.g. _machine/contexts/pessoa
+          const rel = fp.replace(vaultPath, '').replace(/^[/\\]/, '').replace(/\.md$/i, '').normalize('NFC')
+          const key = filename.normalize('NFC').toLowerCase()
+          const relKey = rel.normalize('NFC').toLowerCase()
+          const entry = {
+            id: rel,
+            titulo: filename,
+            caderno: '_machine',
+            tags: [],
+            editadaEm: 0,
+            _filename: filename,
+            _filePath: fp,
+            hemisphere: 'machine',
+            relativePath: rel,
+          }
+          if (!map.has(relKey)) map.set(relKey, entry)
+          if (!map.has(key)) map.set(key, entry)
+        }
+      } catch {}
+
       vaultIndexRef.current = map
       return map
     } catch (err) {
@@ -164,32 +191,44 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
   function getSuggestions(query) {
     const q = (query || '').normalize('NFC').toLowerCase().trim()
     const seen = new Set()
-    const results = []
+    const human = []
+    const machine = []
 
     for (const meta of vaultIndexRef.current.values()) {
       if (!meta.titulo) continue
       const key = meta.titulo.normalize('NFC').toLowerCase()
-      if (seen.has(key)) continue   // deduplica (titulo + filename podem apontar para a mesma nota)
-      seen.add(key)
+      // For machine notes, also match on relativePath
+      const relKey = meta.relativePath?.normalize('NFC').toLowerCase() || ''
+      const dedupKey = meta.hemisphere === 'machine' ? (relKey || key) : key
+      if (seen.has(dedupKey)) continue
+      seen.add(dedupKey)
 
-      if (!q || key.includes(q)) {
-        results.push({
-          titulo:    meta.titulo,
-          caderno:   meta.caderno || '',
-          subpasta:  meta.subpasta || '',
-          editadaEm: meta.editadaEm || 0,
-          prefixo:   key.startsWith(q),
-        })
+      if (!q || key.includes(q) || relKey.includes(q)) {
+        const entry = {
+          titulo:       meta.titulo,
+          caderno:      meta.caderno || '',
+          subpasta:     meta.subpasta || '',
+          editadaEm:    meta.editadaEm || 0,
+          prefixo:      key.startsWith(q) || relKey.startsWith(q),
+          hemisphere:   meta.hemisphere || 'human',
+          relativePath: meta.relativePath || '',
+        }
+        if (meta.hemisphere === 'machine') machine.push(entry)
+        else human.push(entry)
       }
     }
 
-    // Ordena: prefixo exato primeiro, depois mais recentes
-    results.sort((a, b) => {
+    const sortFn = (a, b) => {
       if (a.prefixo !== b.prefixo) return a.prefixo ? -1 : 1
       return b.editadaEm - a.editadaEm
-    })
+    }
+    human.sort(sortFn)
+    machine.sort(sortFn)
 
-    return results.slice(0, 8)
+    // 4 human + 4 machine max, or fill remaining slots
+    const hSlice = human.slice(0, machine.length > 0 ? 4 : 8)
+    const mSlice = machine.slice(0, human.length > 0 ? 4 : 8)
+    return [...hSlice, ...mSlice]
   }
 
   // ── Tab mutation helpers ─────────────────────────────────────────────────────
@@ -599,6 +638,33 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
     const titulo = tituloRaw.split('|')[0].trim()
     const key    = titulo.normalize('NFC').toLowerCase()
 
+    // Machine hemisphere link — same mechanism as MachineFileItem.onClick
+    if (titulo.startsWith('_machine/')) {
+      try {
+        const filePath = await window.electron.joinPath(vaultPath, titulo + '.md')
+        const content = await window.electron.readFile(filePath)
+        if (content) {
+          const name = titulo.split('/').pop()
+          const rel = titulo.replace(/^_machine\//, '')
+          trocarNota({
+            id: 'machine:' + rel,
+            titulo: name,
+            caderno: '_machine',
+            tags: [],
+            _rawMarkdown: content,
+            conteudo: null,
+            criadaEm: 0,
+            editadaEm: 0,
+            _filename: name,
+            _machinePath: filePath,
+          })
+        }
+        return
+      } catch (err) {
+        console.warn('[Wikilink] Erro ao abrir arquivo da máquina:', err?.message)
+      }
+    }
+
     // 1. Salva nota atual de forma não-fatal
     if (notaAtiva && saveTimer.current) {
       clearTimeout(saveTimer.current)
@@ -899,6 +965,7 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
         collapsed={sidebarCollapsed}
         toggleCollapsed={toggleSidebar}
         onResizeStart={onSidebarResize}
+        vaultPath={vaultPath}
       />
 
       {/* Main area */}
@@ -963,7 +1030,7 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
                 background: 'transparent',
                 border: 'none',
                 cursor: 'pointer',
-                color: outlineOpen ? '#e8a44a' : '#3d3d3a',
+                color: outlineOpen ? '#e4e4e4' : '#3d3d3a',
                 padding: '2px',
                 borderRadius: '3px',
                 display: 'flex',

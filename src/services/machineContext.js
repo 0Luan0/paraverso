@@ -125,6 +125,34 @@ Formato de saída: texto revisado, notas sobre alterações, sugestões opcionai
 `
 }
 
+function estiloContent() {
+  const now = new Date().toISOString()
+  return `---
+type: machine-context
+subtype: estilo
+version: 1
+updated: ${now}
+---
+
+# Contexto — Estilo de Escrita
+
+## Tom geral
+[A IA preencherá com o tempo]
+
+## Estrutura preferida
+[A IA preencherá com o tempo]
+
+## Vocabulário e linguagem
+[A IA preencherá com o tempo]
+
+## Como conecta ideias
+[A IA preencherá com o tempo]
+
+## Exemplos de trechos característicos
+[A IA preencherá com o tempo]
+`
+}
+
 function readmeContent() {
   return `# Hemisfério Máquina
 
@@ -159,12 +187,14 @@ export async function loadContextForCommand(command, vaultPath) {
   // Read context files
   const pessoaPath = await el().joinPath(contextsPath, 'pessoa.md')
   const interessesPath = await el().joinPath(contextsPath, 'interesses.md')
+  const estiloPath = await el().joinPath(contextsPath, 'estilo.md')
   const templatePath = await el().joinPath(templatesPath, `${command}.md`)
 
-  let pessoa = '', interesses = '', template = ''
+  let pessoa = '', interesses = '', estilo = '', template = ''
 
   try { pessoa = await el().machineContext.readContext(pessoaPath) } catch {}
   try { interesses = await el().machineContext.readContext(interessesPath) } catch {}
+  try { estilo = await el().machineContext.readContext(estiloPath) } catch {}
   try { template = await el().machineContext.readContext(templatePath) } catch {}
 
   return [
@@ -173,6 +203,9 @@ export async function loadContextForCommand(command, vaultPath) {
     '',
     '--- INTERESSES E REFERÊNCIAS ---',
     interesses,
+    '',
+    '--- ESTILO DE ESCRITA ---',
+    estilo,
     '',
     '--- TEMPLATE DO COMANDO ---',
     template,
@@ -220,6 +253,7 @@ export async function listMachineFiles(vaultPath) {
 export const INITIAL_FILES = {
   [`${CONTEXTS_DIR}/pessoa.md`]: pessoaContent,
   [`${CONTEXTS_DIR}/interesses.md`]: interessesContent,
+  [`${CONTEXTS_DIR}/estilo.md`]: estiloContent,
   [`${TEMPLATES_DIR}/pesquise.md`]: pesquiseTemplate,
   [`${TEMPLATES_DIR}/brainstorm.md`]: brainstormTemplate,
   [`${TEMPLATES_DIR}/escrita.md`]: escritaTemplate,

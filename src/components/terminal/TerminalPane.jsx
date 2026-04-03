@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
+import { isCommand, parseCommand, resolveCommand, listCommands, isBuiltinCommand } from '../../services/commandParser'
 
 const TERM_THEME = {
   background: '#1a1a1a',
@@ -32,15 +33,35 @@ export function TerminalPane({ vaultPath, onClose }) {
   const containerRef = useRef(null)
   const termRef = useRef(null)
   const fitAddonRef = useRef(null)
-  const startedRef = useRef(false)
+  const inputBufferRef = useRef('')
+
+  // Autocomplete state
+  const [suggestions, setSuggestions] = useState([])
+  const [selectedIdx, setSelectedIdx] = useState(0)
+  const allCommandsRef = useRef([])
+
+  // Load available commands once
+  useEffect(() => {
+    if (!vaultPath) return
+    listCommands(vaultPath).then(cmds => { allCommandsRef.current = cmds })
+  }, [vaultPath])
+
+  const updateSuggestions = useCallback((buffer) => {
+    if (!buffer.startsWith('\\') || buffer.includes(' ')) {
+      setSuggestions([])
+      return
+    }
+    const partial = buffer.slice(1).toLowerCase()
+    const filtered = allCommandsRef.current.filter(c => c.toLowerCase().startsWith(partial))
+    setSuggestions(filtered)
+    setSelectedIdx(0)
+  }, [])
 
   useEffect(() => {
     if (!containerRef.current || !vaultPath) return
 
-    // Guard against React StrictMode double-mount
     let cancelled = false
 
-    // Create terminal instance
     const term = new Terminal({
       theme: TERM_THEME,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
@@ -50,6 +71,9 @@ export function TerminalPane({ vaultPath, onClose }) {
       cursorStyle: 'bar',
       scrollback: 5000,
       allowProposedApi: true,
+      macOptionIsMeta: true,
+      rightClickSelectsWord: false,
+      scrollOnUserInput: true,
     })
 
     const fitAddon = new FitAddon()
@@ -59,15 +83,41 @@ export function TerminalPane({ vaultPath, onClose }) {
     termRef.current = term
     fitAddonRef.current = fitAddon
 
-    // Mount terminal to DOM
     term.open(containerRef.current)
 
-    // Initial fit
+    // Intercept Cmd+V / Cmd+C to prevent unintended paste behavior
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === 'keydown' && e.metaKey && e.key === 'v') {
+        navigator.clipboard.readText().then(text => {
+          if (text) window.electron.terminal.write(text)
+        })
+        return false
+      }
+      if (e.type === 'keydown' && e.metaKey && e.key === 'c') {
+        const selection = term.getSelection()
+        if (selection) {
+          navigator.clipboard.writeText(selection)
+          return false
+        }
+        return true // no selection → let SIGINT through
+      }
+      return true
+    })
+
+    // Block native browser paste on the terminal container
+    const blockPaste = (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const text = e.clipboardData?.getData('text')
+      if (text) window.electron.terminal.write(text)
+    }
+    containerRef.current.addEventListener('paste', blockPaste)
+
     requestAnimationFrame(() => {
       fitAddon.fit()
     })
 
-    // Start pty process via IPC (with StrictMode guard)
+    // Start pty
     const startPty = async () => {
       if (cancelled) return
       try {
@@ -80,13 +130,176 @@ export function TerminalPane({ vaultPath, onClose }) {
     }
     startPty()
 
-    // Receive data from pty → write to xterm
+    // Receive data from pty → xterm
     window.electron.terminal.onData((data) => {
       if (!cancelled) term.write(data)
     })
 
-    // User types in xterm → send to pty
+    // Handle command execution
+    const handleCommand = async (rawInput) => {
+      const { command, args } = parseCommand(rawInput)
+
+      // Built-in: \task — add to the same daily note the sidebar button uses
+      if (command === 'task') {
+        if (!args || args.trim() === '') {
+          term.writeln('\r\n\x1b[33m⚠ Use: \\task [descrição da tarefa]\x1b[0m')
+          return
+        }
+        try {
+          // Same title format as criarNotaDiaria() in NotasTab.jsx
+          const MESES = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro']
+          const now = new Date()
+          const titulo = `${now.getDate()} ${MESES[now.getMonth()]} ${now.getFullYear()}`
+
+          // Same folder as the sidebar button
+          const journalFolder = await window.electron.getConfig('journalCaderno') || 'Journal'
+
+          // Dispatch journal event to ensure the note exists (creates if needed)
+          window.dispatchEvent(new CustomEvent('paraverso:journal'))
+
+          // Wait for the note to be created/opened, then append task
+          await new Promise(r => setTimeout(r, 600))
+
+          const notePath = await window.electron.joinPath(vaultPath, journalFolder, `${titulo}.md`)
+          const result = await window.electron.vault.addTask(notePath, args.trim())
+
+          if (result.success) {
+            term.writeln(`\r\n\x1b[32m✓ Task adicionada em ${titulo}\x1b[0m`)
+          } else {
+            term.writeln(`\r\n\x1b[33m⚠ ${result.error}\x1b[0m`)
+          }
+        } catch (err) {
+          term.writeln(`\r\n\x1b[31m✕ Erro: ${err.message}\x1b[0m`)
+        }
+        return
+      }
+
+      // Built-in: \pessoa, \interesses, \estilo — scan vault and update one context file
+      const scanTargets = { pessoa: 'pessoa.md', interesses: 'interesses.md', estilo: 'estilo.md' }
+      if (scanTargets[command]) {
+        const targetFile = scanTargets[command]
+        term.writeln(`\r\n\x1b[35m⟳ Varrendo vault para atualizar ${targetFile}...\x1b[0m`)
+
+        // Load the template for this command
+        const machinePath = await window.electron.joinPath(vaultPath, '_machine')
+        const templatePath = await window.electron.joinPath(machinePath, 'templates', `${command}.md`)
+        let templateContent = ''
+        try { templateContent = await window.electron.machineContext.readContext(templatePath) } catch {}
+
+        if (!templateContent || typeof templateContent !== 'string' || templateContent.error) {
+          term.writeln(`\x1b[33m⚠ Template \\${command} não encontrado em _machine/templates/\x1b[0m`)
+          return
+        }
+
+        const notes = await window.electron.vault.scanHuman(vaultPath)
+        if (!notes || notes.length === 0) {
+          term.writeln('\x1b[33m⚠ Nenhuma nota encontrada no vault humano.\x1b[0m')
+          return
+        }
+
+        term.writeln(`\x1b[35m✓ ${notes.length} notas encontradas. Analisando...\x1b[0m`)
+
+        try {
+          const result = await window.electron.vault.runScan(vaultPath, notes, targetFile, templateContent)
+          if (!result.success) {
+            term.writeln('\r\n\x1b[33m⚠ Análise encerrou com erros.\x1b[0m')
+          }
+        } catch (err) {
+          term.writeln(`\r\n\x1b[31m✕ Erro: ${err.message}\x1b[0m`)
+        }
+        return
+      }
+
+      // Template-based commands
+      const { prompt, error } = await resolveCommand(rawInput, vaultPath)
+
+      if (error) {
+        term.writeln(`\r\n\x1b[33m⚠ ${error}\x1b[0m`)
+        return
+      }
+
+      const escaped = prompt.replace(/\n/g, '\\n')
+      window.electron.terminal.write(escaped + '\r')
+    }
+
+    // User input → intercept \ commands
     const inputDisposable = term.onData((data) => {
+      const buf = inputBufferRef.current
+
+      // Escape — clear autocomplete
+      if (data === '\x1b') {
+        setSuggestions([])
+        inputBufferRef.current = ''
+        window.electron.terminal.write(data)
+        return
+      }
+
+      // Tab — accept autocomplete suggestion
+      if (data === '\t' && suggestions.length > 0) {
+        const chosen = suggestions[selectedIdx] || suggestions[0]
+        // Erase current partial from terminal display
+        const partial = buf.slice(1)
+        const eraseLen = partial.length
+        if (eraseLen > 0) {
+          window.electron.terminal.write('\x7f'.repeat(eraseLen))
+        }
+        // Write completed command
+        const completion = chosen.slice(0) + ' '
+        inputBufferRef.current = '\\' + chosen + ' '
+        // Write to terminal display (not pty — we handle display locally for \ commands)
+        term.write(completion.slice(partial.length))
+        setSuggestions([])
+        return
+      }
+
+      // Arrow up/down for autocomplete navigation
+      if (suggestions.length > 0) {
+        if (data === '\x1b[A') { // up
+          setSelectedIdx(i => Math.max(0, i - 1))
+          return
+        }
+        if (data === '\x1b[B') { // down
+          setSelectedIdx(i => Math.min(suggestions.length - 1, i + 1))
+          return
+        }
+      }
+
+      // Backspace
+      if (data === '\x7f') {
+        inputBufferRef.current = buf.slice(0, -1)
+        updateSuggestions(inputBufferRef.current)
+        window.electron.terminal.write(data)
+        return
+      }
+
+      // Enter
+      if (data === '\r') {
+        const currentBuf = inputBufferRef.current.trim()
+        setSuggestions([])
+
+        if (isCommand(currentBuf)) {
+          inputBufferRef.current = ''
+          term.writeln('') // visual newline
+          handleCommand(currentBuf)
+          return
+        }
+
+        inputBufferRef.current = ''
+        window.electron.terminal.write(data)
+        return
+      }
+
+      // Regular character — accumulate in buffer
+      // Only accumulate printable characters (not escape sequences)
+      if (data.length === 1 && data.charCodeAt(0) >= 32) {
+        inputBufferRef.current = buf + data
+        updateSuggestions(inputBufferRef.current)
+      } else if (data.length > 1 && data.charCodeAt(0) !== 27) {
+        // Multi-byte UTF-8 character (emoji, accented chars)
+        inputBufferRef.current = buf + data
+        updateSuggestions(inputBufferRef.current)
+      }
+
       window.electron.terminal.write(data)
     })
 
@@ -98,7 +311,7 @@ export function TerminalPane({ vaultPath, onClose }) {
       }
     })
 
-    // ResizeObserver for fit
+    // ResizeObserver
     const resizeObserver = new ResizeObserver(() => {
       requestAnimationFrame(() => {
         if (fitAddonRef.current && containerRef.current) {
@@ -114,11 +327,11 @@ export function TerminalPane({ vaultPath, onClose }) {
     })
     resizeObserver.observe(containerRef.current)
 
-    // Cleanup — runs on StrictMode remount AND real unmount
     return () => {
       cancelled = true
       resizeObserver.disconnect()
       inputDisposable.dispose()
+      if (containerRef.current) containerRef.current.removeEventListener('paste', blockPaste)
       window.electron.terminal.offData()
       window.electron.terminal.offExit()
       window.electron.terminal.kill()
@@ -126,10 +339,10 @@ export function TerminalPane({ vaultPath, onClose }) {
       termRef.current = null
       fitAddonRef.current = null
     }
-  }, [vaultPath])
+  }, [vaultPath]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: '#1a1a1a' }}>
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: '#1a1a1a', position: 'relative' }}>
       {/* Header */}
       <div style={{
         display: 'flex',
@@ -141,6 +354,9 @@ export function TerminalPane({ vaultPath, onClose }) {
       }}>
         <span style={{ fontSize: '12px', color: '#888', fontFamily: 'Menlo, Monaco, monospace' }}>
           Terminal — Claude Code
+          <span style={{ marginLeft: 12, color: '#555' }}>
+            \ para comandos
+          </span>
         </span>
         <button
           onClick={onClose}
@@ -159,6 +375,53 @@ export function TerminalPane({ vaultPath, onClose }) {
           ×
         </button>
       </div>
+
+      {/* Autocomplete dropdown */}
+      {suggestions.length > 0 && (
+        <div style={{
+          position: 'absolute',
+          bottom: '100%',
+          left: 12,
+          marginBottom: -30,
+          background: '#2a2a2a',
+          border: '1px solid #444',
+          borderRadius: 6,
+          padding: '4px 0',
+          zIndex: 100,
+          minWidth: 180,
+          boxShadow: '0 -4px 12px rgba(0,0,0,0.4)',
+        }}>
+          {suggestions.map((cmd, i) => (
+            <div
+              key={cmd}
+              style={{
+                padding: '4px 12px',
+                fontSize: 12,
+                fontFamily: 'Menlo, Monaco, monospace',
+                color: i === selectedIdx ? '#e4e4e4' : '#888',
+                background: i === selectedIdx ? '#3a3a3a' : 'transparent',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={() => setSelectedIdx(i)}
+              onMouseDown={(e) => {
+                e.preventDefault()
+                const chosen = cmd + ' '
+                const partial = inputBufferRef.current.slice(1)
+                inputBufferRef.current = '\\' + chosen
+                // Write remaining chars to terminal
+                if (termRef.current) {
+                  const remaining = chosen.slice(partial.length)
+                  termRef.current.write(remaining)
+                }
+                setSuggestions([])
+              }}
+            >
+              \{cmd}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Terminal */}
       <div
         ref={containerRef}

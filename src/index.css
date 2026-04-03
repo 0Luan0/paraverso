@@ -105,13 +105,13 @@
 
   /* ── Blockquote (> texto) ── */
   .tiptap blockquote {
-    border-left: 3px solid #C17A3A;
+    border-left: 3px solid #444;
     padding: 0.1rem 0 0.1rem 1rem;
     margin: 0.75rem 0;
-    color: #4A4840;
+    color: #a0a0a0;
     font-style: italic;
   }
-  .dark .tiptap blockquote { border-left-color: #D4924A; color: #B8B0A0; }
+  .dark .tiptap blockquote { border-left-color: #444; color: #a0a0a0; }
 
   /* ── Listas bullet e numerada ──
      Tailwind Preflight zera list-style em todos ul/ol.
@@ -160,7 +160,7 @@
   .tiptap ul[data-type="taskList"] li > label input[type="checkbox"] {
     width: 14px;
     height: 14px;
-    accent-color: #C17A3A;
+    accent-color: #666666;
     cursor: pointer;
   }
   .tiptap ul[data-type="taskList"] li[data-checked="true"] > div {
@@ -168,7 +168,7 @@
     opacity: 0.5;
   }
   .dark .tiptap ul[data-type="taskList"] li > label input[type="checkbox"] {
-    accent-color: #D4924A;
+    accent-color: #666666;
   }
 
   /* ── Linha divisória (---) ── */
@@ -192,22 +192,22 @@
 
   /* ── Wikilinks [[nota]] ── */
   .wikilink {
-    color: #C17A3A;
-    background: rgba(193,122,58,0.08);
+    color: #E75383;
+    background: rgba(231,83,131,0.08);
     border-radius: 3px;
     padding: 0 3px;
     cursor: pointer;
     transition: background 0.15s;
     white-space: nowrap;
   }
-  .wikilink:hover { background: rgba(193,122,58,0.18); }
-  .dark .wikilink { color: #D4924A; background: rgba(212,146,74,0.12); }
-  .dark .wikilink:hover { background: rgba(212,146,74,0.22); }
+  .wikilink:hover { background: rgba(231,83,131,0.18); }
+  .dark .wikilink { color: #E75383; background: rgba(231,83,131,0.12); }
+  .dark .wikilink:hover { background: rgba(231,83,131,0.22); }
 
   /* ── Hashtags #tag ── */
   .hashtag {
-    color: #5B8A6A;
-    background: rgba(91,138,106,0.1);
+    color: #46C0B1;
+    background: rgba(70,192,177,0.1);
     border-radius: 3px;
     padding: 0 3px;
     cursor: pointer;
@@ -215,7 +215,7 @@
     transition: background 0.15s;
     white-space: nowrap;
   }
-  .hashtag:hover { background: rgba(91,138,106,0.2); }
-  .dark .hashtag { color: #7AB894; background: rgba(122,184,148,0.12); }
-  .dark .hashtag:hover { background: rgba(122,184,148,0.22); }
+  .hashtag:hover { background: rgba(70,192,177,0.2); }
+  .dark .hashtag { color: #46C0B1; background: rgba(70,192,177,0.12); }
+  .dark .hashtag:hover { background: rgba(70,192,177,0.22); }
 }

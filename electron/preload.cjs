@@ -64,16 +64,38 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('machine:writeContext', filePath, content),
     listFiles: (vaultPath) =>
       ipcRenderer.invoke('machine:listFiles', vaultPath),
+    watch: (machinePath) =>
+      ipcRenderer.invoke('machine:watch', machinePath),
+    unwatch: () =>
+      ipcRenderer.invoke('machine:unwatch'),
+    onFileChanged: (callback) =>
+      ipcRenderer.on('machine:fileChanged', (_e, data) => callback(data)),
+    offFileChanged: () =>
+      ipcRenderer.removeAllListeners('machine:fileChanged'),
   },
 
-  // ── AI API Key (safeStorage — OS keychain) ─────────────────────────────────
-  ai: {
-    saveApiKey: (apiKey) =>
-      ipcRenderer.invoke('ai:saveApiKey', apiKey),
-    getApiKey: () =>
-      ipcRenderer.invoke('ai:getApiKey'),
-    deleteApiKey: () =>
-      ipcRenderer.invoke('ai:deleteApiKey'),
+  // ── Browser embutido (webview) ──────────────────────────────────────────────
+  browser: {
+    scrapeUrl: (url) =>
+      ipcRenderer.invoke('browser:scrapeUrl', url),
+    webviewReady: (id) =>
+      ipcRenderer.send('browser:webviewReady', id),
+    onSummarize: (callback) =>
+      ipcRenderer.on('browser:summarize', (_e, data) => callback(data)),
+    offSummarize: () =>
+      ipcRenderer.removeAllListeners('browser:summarize'),
+  },
+
+  // ── Vault scan (read-only) ──────────────────────────────────────────────────
+  vault: {
+    scanHuman: (vaultPath) =>
+      ipcRenderer.invoke('vault:scanHuman', vaultPath),
+    runScan: (vaultPath, notes, targetFile, templateContent) =>
+      ipcRenderer.invoke('vault:runScan', vaultPath, notes, targetFile, templateContent),
+    addTask: (notePath, taskText) =>
+      ipcRenderer.invoke('vault:addTask', notePath, taskText),
+    saveAttachment: (vaultPath, nome, buffer) =>
+      ipcRenderer.invoke('attachment:save', vaultPath, nome, buffer),
   },
 
   // ── Terminal embutido (node-pty) ───────────────────────────────────────────

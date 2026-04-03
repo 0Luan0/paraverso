@@ -28,10 +28,10 @@ export default {
           dark3: '#666666',
         },
         accent: {
-          DEFAULT: '#C17A3A',
-          2: '#8B4A1A',
-          dark: '#D4924A',
-          dark2: '#E8B070',
+          DEFAULT: '#e4e4e4',
+          2: '#aaaaaa',
+          dark: '#e4e4e4',
+          dark2: '#cccccc',
         },
         bdr: {
           DEFAULT: '#C8BFA8',

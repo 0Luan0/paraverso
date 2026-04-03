@@ -10,6 +10,8 @@ import { ConfigTab } from './components/config/ConfigTab'
 import { QuickSwitcher } from './components/QuickSwitcher'
 import { VaultSetup } from './components/VaultSetup'
 import { TerminalPane } from './components/terminal/TerminalPane'
+import BrowserPane from './components/browser/BrowserPane'
+import MachineToast from './components/ui/MachineToast'
 
 // ── Inner app — has access to VaultContext ────────────────────────────────────
 function AppInner() {
@@ -30,6 +32,21 @@ function AppInner() {
   const [terminalKey, setTerminalKey] = useState(0)
   const isDraggingRef = useRef(false)
   const containerRef = useRef(null)
+
+  // Browser panel state
+  const [browserOpen, setBrowserOpen] = useState(false)
+  const [browserWidth, setBrowserWidth] = useState(() => {
+    const saved = localStorage.getItem('paraverso-browser-width')
+    return saved ? parseInt(saved, 10) : 600
+  })
+  const isDraggingBrowserRef = useRef(false)
+
+  const toggleBrowser = useCallback(() => {
+    setBrowserOpen(prev => !prev)
+  }, [])
+
+  // Machine file watcher + toasts
+  const [machineToasts, setMachineToasts] = useState([])
 
   const toggleTerminal = useCallback(() => {
     setTerminalOpen(prev => {
@@ -72,8 +89,55 @@ function AppInner() {
     document.addEventListener('mouseup', onUp)
   }, [])
 
+  // Browser horizontal resize
+  const handleBrowserResizeStart = useCallback((e) => {
+    e.preventDefault()
+    isDraggingBrowserRef.current = true
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const onMove = (moveEvent) => {
+      if (!isDraggingBrowserRef.current || !containerRef.current) return
+      const containerRect = containerRef.current.getBoundingClientRect()
+      const newWidth = containerRect.right - moveEvent.clientX
+      const clamped = Math.max(300, Math.min(newWidth, containerRect.width - 400))
+      setBrowserWidth(clamped)
+    }
+
+    const onUp = () => {
+      isDraggingBrowserRef.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      setBrowserWidth(w => {
+        localStorage.setItem('paraverso-browser-width', String(w))
+        return w
+      })
+    }
+
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [])
+
   // Limpa tema customizado legado (se existir)
   useEffect(() => { localStorage.removeItem('paraverso-tema-custom') }, [])
+
+  // Watch _machine/ for AI file changes → show toasts
+  useEffect(() => {
+    if (!vaultPath || !window.electron?.machineContext?.watch) return
+    const machinePath = vaultPath + '/_machine'
+    window.electron.machineContext.watch(machinePath)
+
+    window.electron.machineContext.onFileChanged(({ type, filename }) => {
+      setMachineToasts(prev => [...prev, { id: Date.now(), filename, type }])
+    })
+
+    return () => {
+      window.electron.machineContext.unwatch()
+      window.electron.machineContext.offFileChanged()
+    }
+  }, [vaultPath])
 
   // ── Atalhos globais de teclado ─────────────────────────────────────────────
   useEffect(() => {
@@ -153,6 +217,7 @@ function AppInner() {
         <QuickSwitcher
           onClose={() => setQuickSwitcher(false)}
           onAbrirNota={handleAbrirNota}
+          vaultPath={vaultPath}
         />
       )}
 
@@ -163,19 +228,44 @@ function AppInner() {
         onNotaDia={handleNotaDia}
         terminalOpen={terminalOpen}
         onToggleTerminal={toggleTerminal}
+        browserOpen={browserOpen}
+        onToggleBrowser={toggleBrowser}
       />
 
       {/* Conteúdo da aba ativa + terminal inferior */}
       <div ref={containerRef} className="flex-1 flex flex-col overflow-hidden min-w-0">
-        {/* Main content area */}
+        {/* Main content area — editor (+ optional browser side panel) */}
         <div className="flex-1 flex overflow-hidden min-w-0" style={terminalOpen ? { minHeight: 200 } : undefined}>
-          {aba === 'mes'    && <MesTab />}
-          {/* NotasTab mantido montado (display:none) para preservar estado ao trocar de aba */}
-          <div style={{ display: aba === 'notas' ? 'contents' : 'none' }}>
-            <NotasTab textura={textura} notaPendente={notaPendente} onNotaAberta={() => setNotaPendente(null)} onNotaAtiva={setNotaAtivaId} />
+          {/* Editor / tab content */}
+          <div className="flex-1 flex overflow-hidden min-w-0">
+            {aba === 'mes'    && <MesTab />}
+            {/* NotasTab mantido montado (display:none) para preservar estado ao trocar de aba */}
+            <div style={{ display: aba === 'notas' ? 'contents' : 'none' }}>
+              <NotasTab textura={textura} notaPendente={notaPendente} onNotaAberta={() => setNotaPendente(null)} onNotaAtiva={setNotaAtivaId} />
+            </div>
+            {aba === 'grafo'  && <GraphTab dark={dark} />}
+            {aba === 'config' && <ConfigTab dark={dark} toggleTheme={toggleTheme} textura={textura} setTexturaTo={setTexturaTo} />}
           </div>
-          {aba === 'grafo'  && <GraphTab dark={dark} />}
-          {aba === 'config' && <ConfigTab dark={dark} toggleTheme={toggleTheme} textura={textura} setTexturaTo={setTexturaTo} />}
+
+          {/* Browser side panel */}
+          {browserOpen && vaultPath && (
+            <>
+              {/* Vertical resize handle */}
+              <div
+                onMouseDown={handleBrowserResizeStart}
+                style={{
+                  width: 4,
+                  cursor: 'col-resize',
+                  background: '#2a2a2a',
+                  flexShrink: 0,
+                  borderLeft: '1px solid #333',
+                }}
+              />
+              <div style={{ width: browserWidth, flexShrink: 0, overflow: 'hidden' }}>
+                <BrowserPane vaultPath={vaultPath} onClose={() => setBrowserOpen(false)} />
+              </div>
+            </>
+          )}
         </div>
 
         {/* Terminal panel */}
@@ -198,6 +288,18 @@ function AppInner() {
             </div>
           </>
         )}
+      </div>
+
+      {/* Machine toasts */}
+      <div style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 1000 }}>
+        {machineToasts.map(toast => (
+          <MachineToast
+            key={toast.id}
+            filename={toast.filename}
+            type={toast.type}
+            onClose={() => setMachineToasts(prev => prev.filter(t => t.id !== toast.id))}
+          />
+        ))}
       </div>
     </div>
   )

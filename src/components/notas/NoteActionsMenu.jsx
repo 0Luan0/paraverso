@@ -71,7 +71,7 @@ function InputModal({ title, placeholder, defaultValue, onConfirm, onCancel }) {
         />
         <div style={{ display: 'flex', gap: '8px', marginTop: '12px', justifyContent: 'flex-end' }}>
           <button onClick={onCancel} style={{ padding: '5px 14px', borderRadius: '5px', border: '1px solid #333', background: 'transparent', color: '#888', cursor: 'pointer', fontSize: '12px' }}>Cancelar</button>
-          <button onClick={confirm} style={{ padding: '5px 14px', borderRadius: '5px', border: 'none', background: '#e8a44a', color: '#1a1a1a', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>Confirmar</button>
+          <button onClick={confirm} style={{ padding: '5px 14px', borderRadius: '5px', border: '1px solid #555', background: '#2a2a2a', color: '#e4e4e4', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>Confirmar</button>
         </div>
       </div>
     </div>

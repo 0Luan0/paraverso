@@ -17,36 +17,70 @@ electron/
   preload.cjs    — contextBridge (window.electron)
 
 src/
-  App.jsx                          — layout principal, 3 abas (Mês, Notas, Grafo, Config)
-  db/index.js                      — camada de dados unificada (Dexie ou vault)
+  App.jsx                          — layout principal (Mês, Notas, Grafo, Config)
+  db/index.js                      — camada de dados unificada (passthrough para vaultFs)
   lib/
     vaultFs.js                     — operações de arquivo no vault (leitura/escrita/mover notas)
-    markdownUtils.js               — Markdown ↔ TipTap JSON (legado, usado no save fallback)
+    markdownUtils.js               — utilitários markdown (contarPalavras, formatarData)
     templateUtils.js               — resolução de variáveis de template ({{date}}, {{Title}})
+    mesUtils.js                    — utilitários de data/mês (formatarMes, mesAtual, semanaDoAno)
+    attachments.js                 — gerarNomeAnexo, resolverPathAnexo, extDeMimeType
+    graphColors.js                 — corPorCaderno() hash → paleta automática estilo Obsidian
+    graphHemisphere.js             — mergeGraphNodes(), hemisphereTargetX() para grafo hemisférico
     obsidianThemeParser.js         — parser de temas Obsidian (CSS e JSON)
   hooks/
     useTheme.js                    — dark/light mode + aplicação de CSS vars
-    useTexture.js                  — texturas de fundo (dots/grid)
+    useTexture.js                  — texturas de fundo (dots/grid) — usado no editor + ConfigTab
+    useSidebarResize.js            — resize da sidebar por drag
   contexts/VaultContext.jsx        — path do vault selecionado
   components/
     notas/
       NotasTab.jsx                 — orquestrador principal das notas (921 linhas)
-      NoteEditorCM.jsx             — editor CodeMirror 6 com live preview
+      NoteEditorCM.jsx             — editor CodeMirror 6 com live preview + anexos
       NotesSidebar.jsx             — sidebar (cadernos + busca + drag&drop)
       TemplateModal.jsx            — templates de nota (Cmd+T)
     mes/
       MesTab.jsx                   — ✅ FUNCIONANDO — aba mês (não mexa!)
     placeholders/
-      GraphTab.jsx                 — graph view SVG + d3-force (926 linhas)
+      GraphTab.jsx                 — graph view SVG + d3-force com hemisférios
     layout/
       TopBar.jsx                   — barra superior (logo + tema + textura)
       NavTabs.jsx                  — abas de navegação (Mês/Notas/Grafo/Config)
-    QuickSwitcher.jsx              — Cmd+O para abrir/criar notas
+    QuickSwitcher.jsx              — Cmd+O — busca em todas as notas (humanas + máquina)
     config/
       ConfigTab.jsx                — configurações + importação Obsidian + aparência/temas
 ```
 
-## Editor (CodeMirror 6) — Migrado de TipTap
+## Os dois hemisférios do vault
+
+O vault tem dois hemisférios com regras distintas:
+
+| Hemisfério | Pasta | Acesso IA | Visível na sidebar |
+|---|---|---|---|
+| Humano | tudo exceto `_machine/` | ❌ nunca | ✅ sim |
+| Máquina | `_machine/` | ✅ total | ❌ não |
+
+### Regra crítica — RESERVED_DIRS
+`_machine/` está em `RESERVED_DIRS` em `vaultFs.js`. Isso faz com que `_getAllMdPaths()` nunca retorne arquivos de `_machine/`. **Isso é intencional** — remove `_machine` de:
+- Sidebar de notas
+- Graph view (notas humanas)
+- Backlinks
+- Busca
+
+Para incluir notas de `_machine` onde necessário (QuickSwitcher, graph hemisférico), use o padrão de merge:
+```javascript
+// Padrão correto — NÃO modifique RESERVED_DIRS
+const humanas = await getTodasNotasMetadata()           // sem _machine
+const maquina = await window.electron.machineContext.listFiles(vaultPath)  // só _machine
+const todas = [...humanas.map(n => ({...n, hemisphere: 'human'})),
+               ...maquina.map(e => ({...e, hemisphere: 'machine'}))]
+```
+
+Este padrão já está implementado em:
+- `QuickSwitcher.jsx` — hook `useQuickSwitcherNotas`
+- `GraphTab.jsx` — merge antes de montar `simNodes`
+
+## Editor (CodeMirror 6)
 
 O editor usa CodeMirror 6 com markdown puro (não WYSIWYG). Features:
 
@@ -61,6 +95,29 @@ O editor usa CodeMirror 6 com markdown puro (não WYSIWYG). Features:
 - **HR visual**: `hrPlugin` renderiza `---` como `<hr>` widget
 - **Tasks**: `taskPlugin` com `CheckboxWidget` (3 estados: [ ] [x] [/])
 - **Blockquote**: `blockquotePlugin` com borda esquerda accent
+- **Imagens inline**: `imageDecorationPlugin` renderiza `![[nome.png]]` como `<img>` (live preview)
+- **PDF inline**: `pdfDecorationPlugin` renderiza `![[arquivo.pdf]]` como botão clicável
+- **Paste de anexos**: `attachmentPasteExtension` captura Ctrl+V com imagem/PDF → salva em `attachments/` → insere `![[nome]]`
+
+### Anexos (imagens e PDFs)
+```
+Fluxo de paste:
+  Ctrl+V com imagem/PDF no clipboard
+  → attachmentPasteExtension (CodeMirror domEventHandler)
+  → gerarNomeAnexo() → "Pasted image 20260403101943.png"
+  → window.electron.saveAttachment(vaultPath, nome, buffer)
+  → IPC attachment:save → fs.writeFileSync(vault/attachments/nome)
+  → insere ![[nome]] no cursor
+
+Fluxo de render:
+  imageDecorationPlugin detecta ![[*.png|jpg|gif|webp]]
+  → ImageWidget.toDOM() → <img src="attachment://nome">
+  → protocol handler 'attachment://' serve de vault/attachments/
+  → só renderiza quando cursor NÃO está na linha (live preview)
+```
+
+### Protocol handler `attachment://`
+Registrado em `main.cjs` via `protocol.handle('attachment', ...)`. Serve arquivos de `vaultPath/attachments/`. Necessário porque `file://` é bloqueado pelo Electron em renderers rodando em `localhost`.
 
 ### Save flow (markdown-first, sem round-trip)
 1. `onConteudoChange` recebe markdown string do CodeMirror
@@ -70,17 +127,45 @@ O editor usa CodeMirror 6 com markdown puro (não WYSIWYG). Features:
 
 ### Tema dinâmico do editor
 ```js
-// Lê CSS vars em runtime
 getCoresDoTema() → { h1, h2, bold, italic, link, tag, codeBg, ... }
-
-// Cria tema com cores atuais
 criarTemaEditor(cores) → [syntaxHighlighting(...), EditorView.theme({...})]
-
-// Hot-swap via Compartment
 temaCompartment.reconfigure(criarTemaEditor(getCoresDoTema()))
-
-// Escuta mudanças de tema
 window.addEventListener('paraverso:tema-changed', handler)
+```
+
+## QuickSwitcher (Cmd+O)
+
+Estágio único — mostra todas as notas do vault (humanas + máquina) em uma lista unificada.
+
+- Notas humanas: cor padrão + nome do caderno
+- Notas de `_machine`: badge roxo `⚙️ máquina`
+- Busca por título, caderno e relativePath
+- `Backspace` com input vazio fecha o switcher
+- "Criar nota" só disponível para hemisfério humano
+- Dados: `useQuickSwitcherNotas(machineContext)` — merge no mount, sem IPC extra
+
+## Graph View (SVG + d3-force)
+
+- SVG puro (sem React Flow) — zero conflito de coordenadas
+- d3-zoom para pan/zoom, d3-drag para arrastar nós
+- **Cores automáticas por caderno**: `corPorCaderno()` em `graphColors.js` — hash determinístico → paleta de 8 cores estilo Obsidian. Grupos customizados têm prioridade.
+- **Hemisférios visuais**: divisor central fixo (fora do grupo de zoom), labels "hemisfério humano" / "hemisfério máquina"
+- **Nós de `_machine`**: roxo fixo `#a855f7`, carregados via `machineContext.listFiles()` e merged
+- **Força hemisférica**: `forceX` com target `±(width * 0.22)` por hemisfério, strength `0.12`
+- Arestas cruzam o divisor livremente quando nota humana linka nota máquina
+- Hover highlight com transições suaves
+- Config panel colapsável (nós, arestas, física, exibição, grupos)
+
+### Arquitetura do SVG
+```
+<svg>
+  <g class="brain-decoration-fixed">   ← FORA do zoom — fixo na tela
+    divisor central, labels hemisférios
+  </g>
+  <g ref={zoomGroupRef}>               ← DENTRO do zoom — se move com pan/zoom
+    links, nós, labels
+  </g>
+</svg>
 ```
 
 ## Sistema de temas
@@ -105,22 +190,10 @@ Suporta 3 formatos:
 - **Obsidian padrão**: extrai de `.theme-dark` / `:root`
 - **Style Settings JSON**: mapeia chaves `Editor@@h1-color@@dark`
 
-## Graph View (SVG + d3-force)
-
-- SVG puro (sem React Flow) — zero conflito de coordenadas
-- d3-zoom para pan/zoom, d3-drag para arrastar nós
-- `getNotasParaGrafoVault()` com `Promise.all` para leitura paralela
-- Wikilinks pré-extraídos no vault scan (não faz round-trip)
-- Grupos de cor customizáveis com autocomplete de cadernos
-- Force simulation: forceLink, forceManyBody, forceX, forceY, forceCollide
-- Hover highlight com transições suaves (d3 transitions)
-- Config panel colapsável (nós, arestas, física, exibição, grupos)
-
 ## Arquitetura de notas
 
 ### Vault Index (em memória)
 ```js
-// Map<titulo_normalizado_NFC_lowercase, metadata>
 vaultIndexRef.current.get('nome da nota') // → { id, titulo, caderno, _filename }
 ```
 
@@ -145,11 +218,11 @@ Toda comparação de path usa `.normalize('NFC')`. Ver `_topDir()` em vaultFs.js
 - Pastas e subpastas iniciam fechadas
 - `notasPorCaderno` cache — expandir pasta carrega notas sem mudar caderno ativo
 - Chevron `>` só expande/recolhe — nome do caderno seleciona
+- `_machine/` nunca aparece aqui — filtrada por `RESERVED_DIRS`
 
 ## Templates
 
 - Leitura direta de `.md` na pasta templates do vault
-- Inserção via `markdownParaTipTapJson` → `insertContent` no CodeMirror
 - Variáveis: `{{date}}`, `{{time}}`, `{{Title}}`, `{{title}}`
 - Gerenciador de templates inline no ConfigTab
 - Pasta templates filtrada da sidebar de notas
@@ -159,13 +232,28 @@ Toda comparação de path usa `.normalize('NFC')`. Ver `_topDir()` em vaultFs.js
 - `fs:readdir` (com opção `{ dirsOnly: true }`)
 - `fs:readdirRecursive`, `fs:mkdir`, `fs:joinPath`
 - `dialog:openFolder`
+- `attachment:save` — salva buffer de imagem/PDF em `vault/attachments/`
+- Protocol `attachment://` — serve arquivos de `vault/attachments/` (bypassa bloqueio file://)
+
+## db/index.js — passthrough
+
+`db/index.js` é uma camada de passthrough puro para `vaultFs.js`:
+```javascript
+export const getNota = (id) => vaultFs.getNotaVault(id)
+// ...8 funções no mesmo padrão
+```
+Existe por razões históricas (havia lógica Dexie aqui). **Não consolidar ainda** — 12 arquivos dependem desse import. Dívida técnica conhecida para sprint futuro.
 
 ## O que NÃO fazer
+
 - **Não mexa na Aba Mês** (`MesTab.jsx` e arquivos em `mes/`)
+- **Não remova `_machine` de `RESERVED_DIRS`** — quebra sidebar, backlinks, busca, graph
+- **Não use `file://` para servir anexos** — bloqueado pelo Electron em dev. Use `attachment://`
 - **Não substitua o vault index** por `getTodasNotas()` — era causa raiz de bugs
 - **Não use `invalidateIndex()` com `new Map()`** — limpar o mapa mata o autocomplete
 - **Não adicione `.dark` CSS vars no index.css** — `useTheme.js` gerencia via JS
 - **Não use HTML intermediário em templates** — markdown → TipTap JSON direto
+- **Não modifique `wikilinkPlugin` para resolver nomes de arquivo** — adicione guard `ATTACHMENT_EXTS` para ignorar `.png`, `.pdf`, etc.
 
 ## Status das features
 
@@ -173,10 +261,10 @@ Toda comparação de path usa `.normalize('NFC')`. Ver `_topDir()` em vaultFs.js
 |---|---|---|
 | Aba Mês | ✅ Funcionando | NÃO MEXA |
 | Editor CodeMirror 6 | ✅ Funcionando | Live preview, temas dinâmicos |
-| Graph View (d3-force) | ✅ Funcionando | SVG + zoom/drag + grupos de cor |
+| Graph View (d3-force) | ✅ Funcionando | Hemisférios + cores automáticas por caderno |
 | Wikilinks [[nota]] | ✅ Funcionando | Click em `.cm-wikilink`, autocomplete |
 | Backlinks | ✅ Funcionando | Painel no rodapé do editor |
-| QuickSwitcher (Cmd+O) | ✅ Funcionando | Criar nota se não existe |
+| QuickSwitcher (Cmd+O) | ✅ Funcionando | Notas humanas + máquina, badge visual |
 | Busca na sidebar | ✅ Funcionando | Lupa + prefixes path:/file:/tag: |
 | Importação Obsidian | ✅ Funcionando | Preserva subpastas e IDs |
 | Templates | ✅ Funcionando | Gerenciador no ConfigTab |
@@ -185,6 +273,8 @@ Toda comparação de path usa `.normalize('NFC')`. Ver `_topDir()` em vaultFs.js
 | Drag & drop notas | ✅ Funcionando | Mover entre cadernos |
 | Autosave | ✅ Funcionando | Debounce 700ms + flush no unmount |
 | Nomes únicos | ✅ Funcionando | "Sem título 2", "Sem título 3" |
+| Anexos (imagem/PDF) | ✅ Funcionando | Paste Ctrl+V → salva em attachments/ → renderiza inline |
+| Hemisfério Máquina | ✅ Funcionando | _machine/ isolada, merge seletivo onde necessário |
 | Sync Supabase | ❌ Fase 3 | |
 
 ## Branches

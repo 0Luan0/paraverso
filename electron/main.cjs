@@ -1,4 +1,5 @@
-const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron')
+const { app, BrowserWindow, shell, ipcMain, dialog, protocol, net } = require('electron')
+const { pathToFileURL } = require('url')
 const path = require('path')
 const fs = require('fs')
 const fsp = fs.promises
@@ -62,6 +63,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
+      webviewTag: true,
       preload: path.join(__dirname, 'preload.cjs'),
     },
   })
@@ -90,7 +92,21 @@ function createWindow() {
   })
 }
 
+// Register attachment:// as privileged scheme before app is ready
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'attachment', privileges: { secure: true, supportFetchAPI: true, bypassCSP: true } },
+])
+
 app.whenReady().then(() => {
+  // Protocol handler: attachment://filename.png → serves from vault/attachments/
+  protocol.handle('attachment', (request) => {
+    const nome = decodeURIComponent(request.url.slice('attachment://'.length))
+    const vaultPath = getVaultPath()
+    if (!vaultPath) return new Response('No vault', { status: 404 })
+    const filePath = path.join(vaultPath, 'attachments', nome)
+    return net.fetch(pathToFileURL(filePath).toString())
+  })
+
   registerIpcHandlers()
   createWindow()
 
@@ -408,6 +424,33 @@ function registerIpcHandlers() {
             '',
           ].join('\n'),
 
+          'contexts/estilo.md': [
+            '---',
+            'type: machine-context',
+            'subtype: estilo',
+            'version: 1',
+            `updated: ${now}`,
+            '---',
+            '',
+            '# Contexto — Estilo de Escrita',
+            '',
+            '## Tom geral',
+            '[A IA preencherá com o tempo]',
+            '',
+            '## Estrutura preferida',
+            '[A IA preencherá com o tempo]',
+            '',
+            '## Vocabulário e linguagem',
+            '[A IA preencherá com o tempo]',
+            '',
+            '## Como conecta ideias',
+            '[A IA preencherá com o tempo]',
+            '',
+            '## Exemplos de trechos característicos',
+            '[A IA preencherá com o tempo]',
+            '',
+          ].join('\n'),
+
           'README.md': [
             '# Hemisfério Máquina',
             '',
@@ -421,6 +464,48 @@ function registerIpcHandlers() {
         for (const [relPath, content] of Object.entries(files)) {
           const fullPath = path.join(machinePath, relPath)
           await fsp.writeFile(fullPath, content, 'utf-8')
+        }
+      } else {
+        // _machine/ already exists — ensure new files (e.g. estilo.md) are created
+        const newFiles = {
+          'contexts/estilo.md': true,
+        }
+        for (const relPath of Object.keys(newFiles)) {
+          const fullPath = path.join(machinePath, relPath)
+          if (!fs.existsSync(fullPath)) {
+            console.log('[MACHINE INIT] creating missing file:', fullPath)
+            await fsp.mkdir(path.dirname(fullPath), { recursive: true })
+            // Use the content from the files map above (rebuild it)
+            const now = new Date().toISOString()
+            if (relPath === 'contexts/estilo.md') {
+              await fsp.writeFile(fullPath, [
+                '---',
+                'type: machine-context',
+                'subtype: estilo',
+                'version: 1',
+                `updated: ${now}`,
+                '---',
+                '',
+                '# Contexto — Estilo de Escrita',
+                '',
+                '## Tom geral',
+                '[A IA preencherá com o tempo]',
+                '',
+                '## Estrutura preferida',
+                '[A IA preencherá com o tempo]',
+                '',
+                '## Vocabulário e linguagem',
+                '[A IA preencherá com o tempo]',
+                '',
+                '## Como conecta ideias',
+                '[A IA preencherá com o tempo]',
+                '',
+                '## Exemplos de trechos característicos',
+                '[A IA preencherá com o tempo]',
+                '',
+              ].join('\n'), 'utf-8')
+            }
+          }
         }
       }
 
@@ -484,48 +569,6 @@ function registerIpcHandlers() {
     }
   })
 
-  // ── API Key (safeStorage — OS keychain via Electron) ───────────────────────
-
-  const { safeStorage } = require('electron')
-
-  function getApiKeyPath() {
-    return path.join(app.getPath('userData'), '.ai-key')
-  }
-
-  ipcMain.handle('ai:saveApiKey', async (_e, apiKey) => {
-    try {
-      if (!safeStorage.isEncryptionAvailable()) {
-        throw new Error('Encryption not available on this system')
-      }
-      const encrypted = safeStorage.encryptString(apiKey)
-      await fsp.writeFile(getApiKeyPath(), encrypted)
-      return { success: true }
-    } catch (err) {
-      throw new Error(`ai:saveApiKey falhou: ${err.message}`)
-    }
-  })
-
-  ipcMain.handle('ai:getApiKey', async () => {
-    try {
-      if (!safeStorage.isEncryptionAvailable()) return null
-      const keyPath = getApiKeyPath()
-      try { await fsp.access(keyPath) } catch { return null }
-      const encrypted = await fsp.readFile(keyPath)
-      return safeStorage.decryptString(encrypted)
-    } catch {
-      return null
-    }
-  })
-
-  ipcMain.handle('ai:deleteApiKey', async () => {
-    try {
-      const keyPath = getApiKeyPath()
-      try { await fsp.unlink(keyPath) } catch {}
-      return { success: true }
-    } catch (err) {
-      throw new Error(`ai:deleteApiKey falhou: ${err.message}`)
-    }
-  })
 
   // ── Terminal embutido (shell + claude) ──────────────────────────────────────
   // Architecture: spawn a real interactive shell (zsh/bash), then write the
@@ -556,6 +599,30 @@ function registerIpcHandlers() {
       }
       const mcpConfigPath = path.join(os.tmpdir(), 'paraverso-mcp-config.json')
       fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2))
+
+      // Create/update CLAUDE.md in vault root — Claude Code reads it automatically
+      const claudeMdPath = path.join(vaultPath, 'CLAUDE.md')
+      console.log('[TERMINAL] creating CLAUDE.md at:', claudeMdPath)
+      fs.writeFileSync(claudeMdPath, [
+        '# Instruções para o Claude Code — Paraverso',
+        '',
+        '## Contexto obrigatório',
+        'Antes de responder qualquer coisa, leia estes arquivos:',
+        '- _machine/contexts/pessoa.md — quem é esta pessoa, como ela pensa e se comunica',
+        '- _machine/contexts/interesses.md — livros, autores, temas e referências desta pessoa',
+        '- _machine/contexts/estilo.md — como esta pessoa escreve e estrutura seus pensamentos',
+        '',
+        '## Regras de escrita',
+        '- Você pode criar e modificar arquivos APENAS dentro de `_machine/`',
+        '- NUNCA modifique arquivos fora de `_machine/` — o restante do vault é sagrado',
+        '- Quando criar notas de pesquisa ou contexto, salve em `_machine/contexts/`',
+        '',
+        '## Comportamento esperado',
+        '- Use o contexto da pessoa para personalizar todas as respostas',
+        '- Conecte novos temas com referências que a pessoa já conhece',
+        '- Escreva no estilo descrito em estilo.md quando gerar conteúdo',
+        '',
+      ].join('\n'), 'utf-8')
 
       // Spawn a real interactive shell — same pattern as obsidian-terminal.
       // The shell stays alive; we write the claude command into it.
@@ -616,6 +683,255 @@ function registerIpcHandlers() {
     if (ptyProcess) {
       try { ptyProcess.kill() } catch {}
       ptyProcess = null
+    }
+  })
+
+  // ── Browser embutido (webview context menu + scraping) ─────────────────────
+
+  const { Menu, MenuItem, webContents: wcModule } = require('electron')
+  const { Readability } = require('@mozilla/readability')
+  const { JSDOM } = require('jsdom')
+
+  // Native context menu on webview — same pattern as Obsidian Surfing
+  ipcMain.on('browser:webviewReady', (_event, webContentsId) => {
+    const wc = wcModule.fromId(webContentsId)
+    if (!wc) return
+
+    const [win] = BrowserWindow.getAllWindows()
+
+    wc.on('context-menu', (_e, params) => {
+      const menuItems = []
+
+      if (params.selectionText && params.selectionText.trim().length > 0) {
+        menuItems.push(new MenuItem({
+          label: 'Resumir com IA',
+          click: () => {
+            if (win && !win.isDestroyed()) {
+              win.webContents.send('browser:summarize', {
+                selectedText: params.selectionText,
+                url: params.pageURL,
+              })
+            }
+          },
+        }))
+        menuItems.push(new MenuItem({ type: 'separator' }))
+      }
+
+      menuItems.push(new MenuItem({ label: 'Voltar', enabled: wc.canGoBack(), click: () => wc.goBack() }))
+      menuItems.push(new MenuItem({ label: 'Avançar', enabled: wc.canGoForward(), click: () => wc.goForward() }))
+      menuItems.push(new MenuItem({ label: 'Recarregar', click: () => wc.reload() }))
+      menuItems.push(new MenuItem({ type: 'separator' }))
+      menuItems.push(new MenuItem({ label: 'Copiar', role: 'copy', enabled: (params.selectionText || '').length > 0 }))
+
+      const menu = Menu.buildFromTemplate(menuItems)
+      menu.popup({ window: win })
+    })
+  })
+
+  // Scrape a URL and return cleaned article content via Readability
+  ipcMain.handle('browser:scrapeUrl', async (_e, url) => {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+      })
+      const html = await res.text()
+      const dom = new JSDOM(html, { url })
+      const reader = new Readability(dom.window.document)
+      const article = reader.parse()
+      return {
+        title: article?.title || '',
+        content: article?.textContent?.slice(0, 8000) || '',
+        excerpt: article?.excerpt || '',
+      }
+    } catch (err) {
+      return { error: err.message }
+    }
+  })
+
+  // ── Machine file watcher ──────────────────────────────────────────────────
+
+  let machineWatcher = null
+
+  ipcMain.handle('machine:watch', (event, machinePath) => {
+    if (machineWatcher) { try { machineWatcher.close() } catch {} }
+
+    try {
+      machineWatcher = fs.watch(machinePath, { recursive: true }, (eventType, filename) => {
+        if (filename && filename.endsWith('.md')) {
+          const [win] = BrowserWindow.getAllWindows()
+          if (win && !win.isDestroyed()) {
+            win.webContents.send('machine:fileChanged', {
+              type: eventType,
+              filename,
+              path: path.join(machinePath, filename),
+            })
+          }
+        }
+      })
+    } catch {}
+  })
+
+  ipcMain.handle('machine:unwatch', () => {
+    if (machineWatcher) {
+      try { machineWatcher.close() } catch {}
+      machineWatcher = null
+    }
+  })
+
+  // ── Vault scan (read-only — human hemisphere) ─────────────────────────────
+
+  const SCAN_SKIP = new Set(['_machine', '.obsidian', '.trash', 'node_modules', 'meses', '.git'])
+
+  ipcMain.handle('vault:scanHuman', async (_e, vaultPath) => {
+    try {
+      validatePath(vaultPath)
+      const results = []
+
+      const walk = (dir) => {
+        let entries
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+
+        for (const entry of entries) {
+          if (SCAN_SKIP.has(entry.name) || entry.name.startsWith('.')) continue
+
+          const fullPath = path.join(dir, entry.name)
+          if (entry.isDirectory()) {
+            walk(fullPath)
+          } else if (entry.name.endsWith('.md')) {
+            try {
+              const content = fs.readFileSync(fullPath, 'utf-8')
+              results.push({
+                path: fullPath,
+                name: entry.name.replace(/\.md$/i, ''),
+                preview: content.slice(0, 500),
+              })
+            } catch {}
+          }
+        }
+      }
+
+      walk(vaultPath)
+      return results
+    } catch (err) {
+      throw new Error(`vault:scanHuman falhou: ${err.message}`)
+    }
+  })
+
+  // Generic vault scan — runs Claude --print to update a single context file
+  const { spawn } = require('child_process')
+
+  ipcMain.handle('vault:runScan', async (event, vaultPath, notes, targetFile, templateContent) => {
+    try {
+      validatePath(vaultPath)
+
+      const samples = notes
+        .filter(n => n.preview.length > 80)
+        .sort((a, b) => b.preview.length - a.preview.length)
+        .slice(0, 30)
+        .map(n => `### ${n.name}\n${n.preview.slice(0, 400)}`)
+        .join('\n\n---\n\n')
+
+      const prompt = [
+        templateContent,
+        '',
+        'ARQUIVO A ATUALIZAR:',
+        `${vaultPath}/_machine/contexts/${targetFile}`,
+        '',
+        `NOTAS DO VAULT (${notes.length} total, mostrando 30 mais longas):`,
+        '',
+        samples,
+        '',
+        `Analise as notas acima e atualize o arquivo ${targetFile} com o que descobriu.`,
+      ].join('\n')
+
+      const webContents = event.sender
+
+      return new Promise((resolve) => {
+        const child = spawn('/usr/local/bin/claude', [
+          '-p', prompt,
+          '--dangerously-skip-permissions',
+        ], {
+          cwd: vaultPath,
+          env: {
+            ...process.env,
+            PATH: `/usr/local/bin:/opt/homebrew/bin:${process.env.PATH || ''}`,
+          },
+        })
+
+        child.stdout.on('data', (data) => {
+          if (!webContents.isDestroyed()) {
+            webContents.send('terminal:data', data.toString())
+          }
+        })
+        child.stderr.on('data', (data) => {
+          if (!webContents.isDestroyed()) {
+            webContents.send('terminal:data', data.toString())
+          }
+        })
+        child.on('close', (code) => {
+          if (!webContents.isDestroyed()) {
+            webContents.send('terminal:data', `\r\n\x1b[35m✓ ${targetFile} atualizado.\x1b[0m\r\n`)
+          }
+          resolve({ success: code === 0 })
+        })
+        child.on('error', (err) => {
+          resolve({ success: false, output: err.message })
+        })
+      })
+    } catch (err) {
+      throw new Error(`vault:runScan falhou: ${err.message}`)
+    }
+  })
+
+  // ── Quick task — add to daily note ─────────────────────────────────────────
+
+  // Append task to daily note — finds the file with NFC normalization
+  ipcMain.handle('vault:addTask', async (_e, notePath, taskText) => {
+    try {
+      validatePath(notePath)
+      // macOS uses NFD for filenames — normalize to find the file
+      let resolved = notePath.normalize('NFC')
+      if (!fs.existsSync(resolved)) {
+        resolved = notePath.normalize('NFD')
+      }
+      if (!fs.existsSync(resolved)) {
+        // Last resort: scan directory for matching filename
+        const dir = path.dirname(notePath)
+        const base = path.basename(notePath).normalize('NFC').toLowerCase()
+        try {
+          const entries = await fsp.readdir(dir)
+          const match = entries.find(e => e.normalize('NFC').toLowerCase() === base)
+          if (match) resolved = path.join(dir, match)
+        } catch {}
+      }
+      if (!fs.existsSync(resolved)) {
+        return { error: 'Nota não encontrada: ' + notePath }
+      }
+      const current = await fsp.readFile(resolved, 'utf-8')
+      const updated = current.trimEnd() + `\n- [ ] ${taskText}\n`
+      await fsp.writeFile(resolved, updated, 'utf-8')
+      return { success: true }
+    } catch (err) {
+      throw new Error(`vault:addTask falhou: ${err.message}`)
+    }
+  })
+
+  // ── Attachment save ────────────────────────────────────────────────────────
+
+  ipcMain.handle('attachment:save', async (_e, vaultPath, nome, bufferArray) => {
+    try {
+      validatePath(vaultPath)
+      const attachDir = path.join(vaultPath, 'attachments')
+      if (!fs.existsSync(attachDir)) {
+        await fsp.mkdir(attachDir, { recursive: true })
+      }
+      const filePath = path.join(attachDir, nome)
+      await fsp.writeFile(filePath, Buffer.from(bufferArray))
+      return { success: true, filePath }
+    } catch (err) {
+      throw new Error(`attachment:save falhou: ${err.message}`)
     }
   })
 }

@@ -83,6 +83,89 @@ function SubpastaSection({ nome, notas, collapsed, onToggle, notaSelecionada, on
 
 // ── Sidebar principal ──────────────────────────────────────────────────────────
 
+// ── Hemisphere identity ─────────────────────────────────────────────────────
+const HUMAN_COLOR = '#4ec9b0'
+const MACHINE_COLOR = '#b4a7f5'
+
+function HemisphereHeader({ label, color, count, collapsed, onToggle }) {
+  return (
+    <div
+      onClick={onToggle}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '8px 14px 4px',
+        cursor: 'pointer',
+        userSelect: 'none',
+      }}
+    >
+      <div style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 }} />
+      <span style={{ fontSize: 10, fontWeight: 500, letterSpacing: '.1em', textTransform: 'uppercase', color }}>
+        {label}
+      </span>
+      <span style={{ fontSize: 10, color: '#555', marginLeft: 'auto', fontFamily: 'Menlo, Monaco, monospace' }}>
+        {count}
+      </span>
+      <span style={{ fontSize: 10, color: '#444', marginLeft: 4, transition: 'transform .15s', display: 'inline-block', transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}>
+        ›
+      </span>
+    </div>
+  )
+}
+
+function MachineFileItem({ filePath, vaultPath, badge, onSelect }) {
+  // Extract display name from absolute path
+  const rel = filePath.replace(vaultPath, '').replace(/^[/\\]_machine[/\\]/, '')
+  const name = rel.split(/[/\\]/).pop().replace(/\.md$/i, '')
+
+  return (
+    <div
+      className="flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer hover:bg-[#1a1628] transition-colors"
+      onClick={async () => {
+        try {
+          const content = await window.electron?.readFile(filePath)
+          if (!content) return
+          // Create a nota-like object compatible with the editor
+          const nota = {
+            id: 'machine:' + rel,
+            titulo: name,
+            caderno: '_machine',
+            tags: [],
+            _rawMarkdown: content,
+            conteudo: null,
+            criadaEm: 0,
+            editadaEm: 0,
+            _filename: name,
+            _machinePath: filePath,
+          }
+          if (onSelect) onSelect(nota)
+        } catch {}
+      }}
+    >
+      <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#9d8ff5', flexShrink: 0, opacity: 0.6 }} />
+      <span style={{ fontSize: 12, color: '#9d8ff5', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {name}
+      </span>
+      {badge && (
+        <span style={{
+          fontSize: 9,
+          fontWeight: 600,
+          letterSpacing: '.05em',
+          textTransform: 'uppercase',
+          color: badge === 'ctx' ? '#7c6fbd' : '#6b5fa8',
+          background: '#1e1a2e',
+          borderRadius: 4,
+          padding: '1px 4px',
+          flexShrink: 0,
+        }}>
+          {badge}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export function NotesSidebar({
   cadernos,
   notas,
@@ -101,10 +184,42 @@ export function NotesSidebar({
   collapsed,
   toggleCollapsed,
   onResizeStart,
+  vaultPath,
 }) {
   const [novoCadernoMode, setNovoCadernoMode] = useState(false)
   const [nomeNovoCaderno, setNomeNovoCaderno] = useState('')
   const [dragOverCaderno, setDragOverCaderno] = useState(null)
+
+  // Hemisphere collapse state (persisted)
+  const [humanCollapsed, setHumanCollapsed] = useState(() => localStorage.getItem('paraverso-human-collapsed') === 'true')
+  const [machineCollapsed, setMachineCollapsed] = useState(() => localStorage.getItem('paraverso-machine-collapsed') === 'true')
+  const [machineFiles, setMachineFiles] = useState([])
+
+  const toggleHuman = () => setHumanCollapsed(prev => { localStorage.setItem('paraverso-human-collapsed', String(!prev)); return !prev })
+  const toggleMachine = () => setMachineCollapsed(prev => { localStorage.setItem('paraverso-machine-collapsed', String(!prev)); return !prev })
+
+  // Load machine files
+  useEffect(() => {
+    if (!vaultPath) return
+    window.electron?.machineContext?.listFiles(vaultPath).then(files => setMachineFiles(files || [])).catch(() => {})
+  }, [vaultPath])
+
+  // Listen for machine file changes to refresh the list
+  useEffect(() => {
+    const refresh = () => {
+      if (vaultPath) {
+        window.electron?.machineContext?.listFiles(vaultPath).then(files => setMachineFiles(files || [])).catch(() => {})
+      }
+    }
+    window.electron?.machineContext?.onFileChanged(refresh)
+    return () => { window.electron?.machineContext?.offFileChanged() }
+  }, [vaultPath])
+
+  const getBadge = (filePath) => {
+    if (filePath.includes('/contexts/') || filePath.includes('\\contexts\\')) return 'ctx'
+    if (filePath.includes('/templates/') || filePath.includes('\\templates\\')) return 'tpl'
+    return null
+  }
 
   // Busca inline
   const [buscaAberta, setBuscaAberta] = useState(false)
@@ -232,9 +347,13 @@ export function NotesSidebar({
 
       {/* Header */}
       <div className="flex items-center justify-between px-3 pt-1 pb-2">
-        <span className="uppercase font-medium" style={{ color: '#3d3d3a', fontSize: '10px', letterSpacing: '0.6px' }}>
-          Cadernos
-        </span>
+        <HemisphereHeader
+          label="Humano"
+          color={HUMAN_COLOR}
+          count={Object.values(notasPorCaderno).flat().length || notas.length}
+          collapsed={humanCollapsed}
+          onToggle={toggleHuman}
+        />
         <div className="flex items-center gap-1">
           <button
             onClick={() => { setBuscaAberta(b => !b); if (buscaAberta) { setQueryBusca(''); setResultadosBusca([]) } }}
@@ -260,8 +379,8 @@ export function NotesSidebar({
         </div>
       </div>
 
-      {/* Busca inline */}
-      {buscaAberta && (
+      {/* Busca inline (inside human hemisphere) */}
+      {!humanCollapsed && buscaAberta && (
         <div className="px-2 pb-2 space-y-1">
           <input
             autoFocus
@@ -318,7 +437,7 @@ export function NotesSidebar({
       {/* Árvore unificada */}
       <div className="flex-1 overflow-auto px-2 pb-2">
 
-        {cadernos.map(c => {
+        {!humanCollapsed && cadernos.map(c => {
           const isAtivo    = caderno === c.nome
           const isExpanded = expandedCadernos.has(c.nome)
 
@@ -463,7 +582,7 @@ export function NotesSidebar({
         })}
 
         {/* Input novo caderno */}
-        {novoCadernoMode && (
+        {!humanCollapsed && novoCadernoMode && (
           <div className="flex gap-1 mt-2 px-1">
             <input
               autoFocus
@@ -477,6 +596,37 @@ export function NotesSidebar({
               className="flex-1 text-xs bg-bg-2 dark:bg-bg-dark2 border border-bdr dark:border-bdr-dark rounded px-2 py-1 text-ink dark:text-ink-dark focus:outline-none focus:border-accent dark:focus:border-accent-dark"
             />
             <button onClick={criarCaderno} className="text-xs text-accent dark:text-accent-dark font-medium">OK</button>
+          </div>
+        )}
+
+        {/* ── Divisor entre hemisférios ───────────────────────────── */}
+        <div style={{ height: '0.5px', background: '#2a2a2a', margin: '6px 12px' }} />
+
+        {/* ── Hemisfério Máquina ──────────────────────────────────── */}
+        <HemisphereHeader
+          label="Máquina"
+          color={MACHINE_COLOR}
+          count={machineFiles.length}
+          collapsed={machineCollapsed}
+          onToggle={toggleMachine}
+        />
+
+        {!machineCollapsed && (
+          <div className="mt-1 space-y-0.5">
+            {machineFiles.length === 0 && (
+              <p className="text-xs px-3 py-2 text-center" style={{ color: '#555' }}>
+                Nenhum arquivo da IA ainda.
+              </p>
+            )}
+            {machineFiles.map(fp => (
+              <MachineFileItem
+                key={fp}
+                filePath={fp}
+                vaultPath={vaultPath || ''}
+                badge={getBadge(fp)}
+                onSelect={setNotaSelecionada}
+              />
+            ))}
           </div>
         )}
 

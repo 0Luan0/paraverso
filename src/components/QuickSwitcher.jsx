@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { getTodasNotasMetadata } from '../db/index'
 
+const MACHINE_COLOR = '#9d8ff5'
+
 /**
  * QuickSwitcher — abre com Cmd+O
- * Filtra todas as notas em tempo real, navega com ↑↓ e abre com Enter.
+ * Lista unificada: notas humanas + notas da máquina com badge visual.
+ * Humanas primeiro, máquina depois. Filtra em tempo real.
  */
-export function QuickSwitcher({ onClose, onAbrirNota }) {
+export function QuickSwitcher({ onClose, onAbrirNota, vaultPath }) {
   const [query, setQuery]         = useState('')
   const [todasNotas, setTodas]    = useState([])
   const [filtradas, setFiltradas] = useState([])
@@ -14,24 +17,45 @@ export function QuickSwitcher({ onClose, onAbrirNota }) {
   const listRef   = useRef(null)
   const itemRefs  = useRef([])
 
-  // Carrega apenas metadados ao abrir — sem parsear conteúdo, muito mais rápido
+  // Load both hemispheres on mount
   useEffect(() => {
-    getTodasNotasMetadata()
-      .then(lista => {
-        // Ordena por mais recente
-        const ordenadas = [...lista].sort((a, b) => (b.editadaEm || 0) - (a.editadaEm || 0))
-        setTodas(ordenadas)
-        setFiltradas(ordenadas.slice(0, 25))
-      })
-      .catch(() => {})
+    async function carregar() {
+      let humanas = []
+      try {
+        const lista = await getTodasNotasMetadata()
+        humanas = lista.map(n => ({ ...n, hemisphere: 'human' }))
+      } catch {}
 
-    // Foca o input
+      let maquina = []
+      try {
+        const files = await window.electron?.machineContext?.listFiles(vaultPath) || []
+        maquina = files.map(fp => {
+          const filename = fp.split(/[/\\]/).pop().replace(/\.md$/i, '').normalize('NFC')
+          const rel = fp.replace(vaultPath, '').replace(/^[/\\]/, '').replace(/\.md$/i, '').normalize('NFC')
+          return {
+            id: 'machine:' + rel,
+            titulo: filename,
+            caderno: '_machine',
+            tags: [],
+            editadaEm: 0,
+            _filename: filename,
+            _filePath: fp,
+            hemisphere: 'machine',
+            relativePath: rel,
+          }
+        })
+      } catch {}
+
+      setTodas([
+        ...humanas.sort((a, b) => (b.editadaEm || 0) - (a.editadaEm || 0)),
+        ...maquina,
+      ])
+    }
+    carregar()
     requestAnimationFrame(() => inputRef.current?.focus())
-  }, [])
+  }, [vaultPath])
 
-  // Filtra ao digitar
-  // Usa String() explícito — parseSimpleYaml pode retornar numbers para campos como
-  // "titulo: 2024" ou "id: 123", e number.toLowerCase() lançaria TypeError → tela preta.
+  // Filter on query change
   useEffect(() => {
     try {
       const q = query.trim().toLowerCase()
@@ -43,19 +67,19 @@ export function QuickSwitcher({ onClose, onAbrirNota }) {
             .filter(n => {
               const titulo  = String(n.titulo  ?? '').toLowerCase()
               const caderno = String(n.caderno ?? '').toLowerCase()
-              return titulo.includes(q) || caderno.includes(q)
+              const rel     = String(n.relativePath ?? '').toLowerCase()
+              return titulo.includes(q) || caderno.includes(q) || rel.includes(q)
             })
             .slice(0, 25)
         )
       }
       setCursor(0)
-    } catch (err) {
-      console.error('QuickSwitcher filter error:', err)
+    } catch {
       setFiltradas([])
     }
   }, [query, todasNotas])
 
-  // Scroll do item selecionado para a vista
+  // Scroll selected into view
   useEffect(() => {
     itemRefs.current[cursor]?.scrollIntoView({ block: 'nearest' })
   }, [cursor])
@@ -69,7 +93,6 @@ export function QuickSwitcher({ onClose, onAbrirNota }) {
       if (filtradas[cursor]) {
         onAbrirNota(filtradas[cursor])
       } else if (query.trim()) {
-        // Nota não existe — criar nova com esse título
         onAbrirNota({ titulo: query.trim(), _criar: true })
       }
       onClose()
@@ -112,45 +135,51 @@ export function QuickSwitcher({ onClose, onAbrirNota }) {
                 {query ? 'Nenhuma nota encontrada' : 'Vault vazio'}
               </p>
               {query.trim() && (
-                <p className="text-xs text-accent dark:text-accent-dark mt-2">
+                <p className="text-xs text-ink-3 dark:text-ink-dark3 mt-2">
                   ↵ Criar "<span className="font-medium">{query.trim()}</span>"
                 </p>
               )}
             </div>
           ) : (
-            filtradas.map((nota, i) => (
-              <button
-                key={nota.id}
-                ref={el => (itemRefs.current[i] = el)}
-                onClick={() => { onAbrirNota(nota); onClose() }}
-                className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
-                  i === cursor
-                    ? 'bg-accent/10 dark:bg-accent-dark/10'
-                    : 'hover:bg-bg-2 dark:hover:bg-bg-dark2'
-                }`}
-              >
-                {/* Ícone nota */}
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                  className={i === cursor ? 'text-accent dark:text-accent-dark flex-shrink-0' : 'text-ink-3 dark:text-ink-dark3 flex-shrink-0'}>
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                  <polyline points="14 2 14 8 20 8"/>
-                </svg>
+            filtradas.map((nota, i) => {
+              const isMachine = nota.hemisphere === 'machine'
+              return (
+                <button
+                  key={nota.id}
+                  ref={el => (itemRefs.current[i] = el)}
+                  onClick={() => { onAbrirNota(nota); onClose() }}
+                  className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
+                    i === cursor ? 'bg-white/5' : 'hover:bg-white/3'
+                  }`}
+                >
+                  {/* Dot — roxo para máquina */}
+                  <div style={{
+                    width: 5, height: 5, borderRadius: '50%', flexShrink: 0, opacity: 0.6,
+                    background: isMachine ? MACHINE_COLOR : 'currentColor',
+                  }} />
 
-                {/* Título */}
-                <span className="flex-1 text-sm text-ink dark:text-ink-dark truncate">
-                  {nota.titulo || 'Sem título'}
-                </span>
+                  {/* Título */}
+                  <span className="flex-1 text-sm truncate" style={isMachine ? { color: MACHINE_COLOR } : undefined}>
+                    {nota.titulo || 'Sem título'}
+                  </span>
 
-                {/* Caderno badge */}
-                <span className="text-xs text-ink-3 dark:text-ink-dark3 flex-shrink-0 bg-bg-2 dark:bg-bg-dark2 px-2 py-0.5 rounded-full">
-                  {nota.caderno}
-                </span>
-              </button>
-            ))
+                  {/* Badge */}
+                  {isMachine ? (
+                    <span style={{ fontSize: 10, color: MACHINE_COLOR, background: '#1e1a2e', borderRadius: 4, padding: '1px 6px', flexShrink: 0 }}>
+                      {nota.relativePath?.split('/').slice(0, -1).pop() || 'máquina'}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-ink-3 dark:text-ink-dark3 flex-shrink-0 bg-bg-2 dark:bg-bg-dark2 px-2 py-0.5 rounded-full">
+                      {nota.caderno}
+                    </span>
+                  )}
+                </button>
+              )
+            })
           )}
         </div>
 
-        {/* Footer hints */}
+        {/* Footer */}
         <div className="border-t border-bdr-2 dark:border-bdr-dark2 px-4 py-2 flex items-center gap-4">
           <span className="text-[11px] text-ink-3/50 dark:text-ink-dark3/50">↑↓ navegar</span>
           <span className="text-[11px] text-ink-3/50 dark:text-ink-dark3/50">↵ {filtradas.length === 0 && query.trim() ? 'criar' : 'abrir'}</span>

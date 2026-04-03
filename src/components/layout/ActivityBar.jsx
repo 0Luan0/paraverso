@@ -81,7 +81,7 @@ function BarButton({ label, active, onClick, children, className = '' }) {
         {active && (
           <div
             className="absolute left-0"
-            style={{ width: '2.5px', height: '20px', background: '#e8a44a', borderRadius: '0 2px 2px 0' }}
+            style={{ width: '2.5px', height: '20px', background: 'rgba(255,255,255,0.25)', borderRadius: '0 2px 2px 0' }}
           />
         )}
         {children}
@@ -109,6 +109,16 @@ function BarButton({ label, active, onClick, children, className = '' }) {
   )
 }
 
+const IconBrowser = () => (
+  <svg width="13" height="13" viewBox="0 0 13 13" fill="none"
+    stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="6.5" cy="6.5" r="5.5"/>
+    <line x1="1" y1="6.5" x2="12" y2="6.5"/>
+    <path d="M6.5 1C8 3.5 8 9.5 6.5 12"/>
+    <path d="M6.5 1C5 3.5 5 9.5 6.5 12"/>
+  </svg>
+)
+
 const IconTerminal = () => (
   <svg width="13" height="13" viewBox="0 0 13 13" fill="none"
     stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
@@ -118,7 +128,7 @@ const IconTerminal = () => (
   </svg>
 )
 
-export default function ActivityBar({ abaAtiva, onAbaChange, onNotaDia, terminalOpen, onToggleTerminal }) {
+export default function ActivityBar({ abaAtiva, onAbaChange, onNotaDia, terminalOpen, onToggleTerminal, browserOpen, onToggleBrowser }) {
   const isElectron = typeof window !== 'undefined' && window.electron
 
   return (
@@ -145,6 +155,11 @@ export default function ActivityBar({ abaAtiva, onAbaChange, onNotaDia, terminal
       </BarButton>
 
       <div className="flex-1" />
+
+      {/* Browser */}
+      <BarButton label="Browser" active={browserOpen} onClick={onToggleBrowser} className="mb-1">
+        <IconBrowser />
+      </BarButton>
 
       {/* Terminal IA */}
       <BarButton label="IA (Terminal)" active={terminalOpen} onClick={onToggleTerminal} className="mb-1">

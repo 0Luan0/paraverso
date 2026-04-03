@@ -7,20 +7,22 @@ import { languages } from '@codemirror/language-data'
 import { autocompletion } from '@codemirror/autocomplete'
 import { HighlightStyle, syntaxHighlighting, syntaxTree, foldService, codeFolding, foldGutter, foldKeymap } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
+import { useVault } from '../../contexts/VaultContext'
+import { gerarNomeAnexo, extDeMimeType } from '../../lib/attachments'
 
 // ── Markdown syntax highlighting ────────────────────────────────────────────
 const markdownHighlight = HighlightStyle.define([
-  { tag: tags.heading1, fontSize: '1.8em', fontWeight: '700', lineHeight: '1.3', color: '#e8a44a' },
-  { tag: tags.heading2, fontSize: '1.4em', fontWeight: '600', lineHeight: '1.4', color: '#e05c5c' },
-  { tag: tags.heading3, fontSize: '1.2em', fontWeight: '600', color: '#6b9ce8' },
-  { tag: tags.heading4, fontSize: '1.1em', fontWeight: '600', color: '#e8c84a' },
-  { tag: tags.heading5, fontSize: '1.05em', fontWeight: '600', color: '#7ec8e3' },
-  { tag: tags.heading6, fontSize: '1em', fontWeight: '600', color: '#b07ee8' },
+  { tag: tags.heading1, fontSize: '1.8em', fontWeight: '700', lineHeight: '1.3', color: '#F9A834' },
+  { tag: tags.heading2, fontSize: '1.4em', fontWeight: '600', lineHeight: '1.4', color: '#46C0B1' },
+  { tag: tags.heading3, fontSize: '1.2em', fontWeight: '600', color: '#e4e4e4' },
+  { tag: tags.heading4, fontSize: '1.1em', fontWeight: '600', color: '#888888' },
+  { tag: tags.heading5, fontSize: '1.05em', fontWeight: '600', color: '#888888' },
+  { tag: tags.heading6, fontSize: '1em', fontWeight: '600', color: '#888888' },
   { tag: tags.strong, fontWeight: '700' },
   { tag: tags.emphasis, fontStyle: 'italic' },
   { tag: tags.strikethrough, textDecoration: 'line-through', opacity: '0.6' },
-  { tag: tags.link, color: '#D4924A' },
-  { tag: tags.url, color: '#D4924A', opacity: '0.7' },
+  { tag: tags.link, color: '#E75383' },
+  { tag: tags.url, color: '#a0a0a0', opacity: '0.7' },
   { tag: tags.monospace, fontFamily: 'ui-monospace, monospace', background: 'rgba(128,128,128,0.12)', borderRadius: '3px', padding: '1px 4px' },
   { tag: tags.quote, fontStyle: 'italic', opacity: '0.75' },
   { tag: tags.processingInstruction, opacity: '0.35' },
@@ -30,7 +32,7 @@ const markdownHighlight = HighlightStyle.define([
 // ── Tema base (Obsidian-like) ───────────────────────────────────────────────
 const baseTheme = EditorView.theme({
   '&': { height: '100%', fontSize: '15px', fontFamily: 'inherit', background: 'transparent' },
-  '.cm-content': { padding: '24px 32px', caretColor: '#D4924A', fontFamily: 'inherit', lineHeight: '1.7', color: '#d4cfc9' },
+  '.cm-content': { padding: '24px 32px', caretColor: '#e4e4e4', fontFamily: 'inherit', lineHeight: '1.7', color: '#d4cfc9' },
   '.cm-focused': { outline: 'none' },
   '.cm-line': { padding: '0' },
   '.cm-scroller': { overflow: 'auto', height: '100%' },
@@ -48,25 +50,25 @@ const baseTheme = EditorView.theme({
     transition: 'color 0.15s',
     padding: '0',
   },
-  '.cm-foldGutter .cm-gutterElement:hover': { color: '#D4924A' },
+  '.cm-foldGutter .cm-gutterElement:hover': { color: '#e4e4e4' },
   '.cm-foldPlaceholder': {
     background: 'rgba(212,146,74,0.1)',
     border: '1px solid rgba(212,146,74,0.25)',
     borderRadius: '3px',
-    color: '#D4924A',
+    color: '#e4e4e4',
     padding: '0 6px',
     margin: '0 4px',
     cursor: 'pointer',
     fontSize: '12px',
   },
-  '.cm-wikilink': { color: '#D4924A', cursor: 'pointer', borderBottom: '1px solid currentColor', opacity: '0.85' },
+  '.cm-wikilink': { color: '#E75383', cursor: 'pointer', borderBottom: '1px solid currentColor', opacity: '0.85' },
   '.cm-wikilink:hover': { opacity: '1' },
-  '.cm-hashtag': { color: '#D4924A', opacity: '0.7' },
-  '.cm-blockquote': { borderLeft: '3px solid #e8a44a', paddingLeft: '12px', color: '#a89080', fontStyle: 'italic' },
+  '.cm-hashtag': { color: '#46C0B1', opacity: '0.7' },
+  '.cm-blockquote': { borderLeft: '3px solid #444', paddingLeft: '12px', color: '#a0a0a0', fontStyle: 'italic' },
   '.cm-tooltip-autocomplete': { background: '#221E16 !important', border: '1px solid #3A3428 !important', borderRadius: '8px !important', boxShadow: '0 8px 24px rgba(0,0,0,0.15) !important', overflow: 'hidden' },
   '.cm-tooltip-autocomplete ul': { maxHeight: '240px' },
   '.cm-tooltip-autocomplete ul li': { padding: '6px 12px !important', fontSize: '13px', color: '#EDE8DF' },
-  '.cm-tooltip-autocomplete ul li[aria-selected]': { background: '#D4924A !important', color: 'white !important' },
+  '.cm-tooltip-autocomplete ul li[aria-selected]': { background: '#e4e4e4 !important', color: 'white !important' },
 })
 
 // ── Fold headings (Obsidian-like) ──────────────────────────────────────────
@@ -95,6 +97,8 @@ const markdownHeadingFold = foldService.of((state, lineStart) => {
 })
 
 // ── Wikilink decoration plugin ──────────────────────────────────────────────
+const ATTACHMENT_EXTS = /\.(png|jpg|jpeg|gif|webp|pdf|mp4|mov|zip)$/i
+
 const wikilinkPlugin = ViewPlugin.fromClass(class {
   decorations
   constructor(view) { this.decorations = this.build(view) }
@@ -104,7 +108,11 @@ const wikilinkPlugin = ViewPlugin.fromClass(class {
     const doc = view.state.doc.toString()
     const re = /\[\[([^\]]+)\]\]/g
     let m
-    while ((m = re.exec(doc)) !== null) builder.add(m.index, m.index + m[0].length, Decoration.mark({ class: 'cm-wikilink' }))
+    while ((m = re.exec(doc)) !== null) {
+      // Skip attachment embeds — handled by image/pdf plugins
+      if (ATTACHMENT_EXTS.test(m[1].split('|')[0])) continue
+      builder.add(m.index, m.index + m[0].length, Decoration.mark({ class: 'cm-wikilink' }))
+    }
     return builder.finish()
   }
 }, { decorations: v => v.decorations })
@@ -136,30 +144,54 @@ function criarWikilinkCompletion(getSuggestionsRef) {
     let sugestoes = []
     try { sugestoes = await getSuggestionsRef.current?.(query) ?? [] } catch { return null }
     if (!sugestoes.length && query.length === 0) return null
+
+    // Build options with hemisphere-aware labels and insertion
+    const options = []
+    let lastHemisphere = null
+
+    for (const s of sugestoes) {
+      const titulo = typeof s === 'string' ? s : (s.titulo ?? s.label ?? '')
+      const hemisphere = s.hemisphere || 'human'
+      const relPath = s.relativePath || ''
+
+      // Add separator when hemisphere changes
+      if (hemisphere !== lastHemisphere) {
+        lastHemisphere = hemisphere
+        options.push({
+          label: hemisphere === 'machine' ? '⚙ Máquina' : '● Humano',
+          type: 'namespace',
+          boost: -100,
+          apply() {}, // non-selectable separator
+        })
+      }
+
+      // Machine notes insert relativePath, human notes insert titulo
+      const linkText = hemisphere === 'machine' ? relPath : titulo
+
+      options.push({
+        label: titulo,
+        detail: hemisphere === 'machine' ? relPath.replace(titulo, '').replace(/[/\\]$/, '') : '',
+        type: hemisphere === 'machine' ? 'class' : 'text',
+        boost: hemisphere === 'human' ? 2 : 1,
+        apply(view, _completion, from, to) {
+          const insertFrom = before.from
+          const docStr = view.state.doc.toString()
+          let insertTo = to
+          if (docStr.slice(to, to + 2) === ']]') insertTo = to + 2
+          const insert = `[[${linkText}]]`
+          view.dispatch({
+            changes: { from: insertFrom, to: insertTo, insert },
+            selection: { anchor: insertFrom + insert.length },
+          })
+        },
+      })
+    }
+
     return {
       from: before.from + 2,
       to: context.pos,
       filter: false,
-      options: sugestoes.map(s => {
-        const label = typeof s === 'string' ? s : (s.titulo ?? s.label ?? '')
-        return {
-          label,
-          type: 'text',
-          boost: 1,
-          apply(view, _completion, from, to) {
-            const insertFrom = before.from
-            const docStr = view.state.doc.toString()
-            // Se auto-close já inseriu ]], inclui no range a substituir
-            let insertTo = to
-            if (docStr.slice(to, to + 2) === ']]') insertTo = to + 2
-            const insert = `[[${label}]]`
-            view.dispatch({
-              changes: { from: insertFrom, to: insertTo, insert },
-              selection: { anchor: insertFrom + insert.length },
-            })
-          },
-        }
-      }),
+      options,
     }
   }
 }
@@ -287,14 +319,14 @@ class CheckboxWidget extends WidgetType {
       transition:background 0.15s,border-color 0.15s;
     `
     if (this.state === 'done') {
-      box.style.background = '#D4924A'
-      box.style.border = '1.5px solid #D4924A'
+      box.style.background = '#e4e4e4'
+      box.style.border = '1.5px solid #e4e4e4'
       box.style.color = 'white'
       box.textContent = '✓'
     } else if (this.state === 'partial') {
       box.style.background = 'rgba(193,122,58,0.25)'
-      box.style.border = '1.5px solid #D4924A'
-      box.style.color = '#D4924A'
+      box.style.border = '1.5px solid #e4e4e4'
+      box.style.color = '#e4e4e4'
       box.textContent = '—'
     } else {
       box.style.background = 'transparent'
@@ -347,6 +379,134 @@ const blockquotePlugin = ViewPlugin.fromClass(class {
   }
 }, { decorations: v => v.decorations })
 
+// ── Attachment paste/drop extension ──────────────────────────────────────────
+function attachmentPasteExtension(vaultPathRef) {
+  return EditorView.domEventHandlers({
+    paste(event, view) {
+      const items = event.clipboardData?.items
+      if (!items) return false
+      for (const item of items) {
+        if (!item.type.startsWith('image/') && item.type !== 'application/pdf') continue
+        event.preventDefault()
+        const file = item.getAsFile()
+        if (!file) continue
+        const ext = extDeMimeType(item.type)
+        const nome = gerarNomeAnexo(ext)
+        file.arrayBuffer().then(async buf => {
+          const vp = vaultPathRef.current
+          if (!vp) return
+          await window.electron.vault.saveAttachment(vp, nome, Array.from(new Uint8Array(buf)))
+          view.dispatch({
+            changes: { from: view.state.selection.main.from, insert: `![[${nome}]]` },
+          })
+        })
+        return true
+      }
+      return false
+    },
+    drop(event, view) {
+      const files = event.dataTransfer?.files
+      if (!files?.length) return false
+      const aceitos = Array.from(files).filter(f => f.type.startsWith('image/') || f.type === 'application/pdf')
+      if (!aceitos.length) return false
+      event.preventDefault()
+      aceitos.forEach(async file => {
+        const ext = extDeMimeType(file.type)
+        const nome = gerarNomeAnexo(ext)
+        const buf = await file.arrayBuffer()
+        const vp = vaultPathRef.current
+        if (!vp) return
+        await window.electron.vault.saveAttachment(vp, nome, Array.from(new Uint8Array(buf)))
+        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.state.doc.length
+        view.dispatch({ changes: { from: pos, insert: `![[${nome}]]` } })
+      })
+      return true
+    },
+  })
+}
+
+// ── Image inline decoration (![[image.png]]) ────────────────────────────────
+const IMG_RE = /!\[\[([^\]]+\.(png|jpg|jpeg|gif|webp))\]\]/gi
+
+class ImageWidget extends WidgetType {
+  constructor(nome) { super(); this.nome = nome }
+  toDOM() {
+    const img = document.createElement('img')
+    img.src = `attachment://${encodeURIComponent(this.nome)}`
+    img.alt = this.nome
+    img.style.cssText = 'max-width:100%;max-height:400px;display:block;margin:8px 0;border-radius:4px;'
+    img.onerror = () => { img.style.display = 'none' }
+    return img
+  }
+  eq(other) { return other.nome === this.nome }
+}
+
+function imageDecorationPlugin() {
+  return ViewPlugin.fromClass(class {
+    constructor(view) { this.decorations = this.build(view) }
+    update(update) {
+      if (update.docChanged || update.viewportChanged || update.selectionSet)
+        this.decorations = this.build(update.view)
+    }
+    build(view) {
+      const builder = new RangeSetBuilder()
+      const doc = view.state.doc.toString()
+      IMG_RE.lastIndex = 0
+      let m
+      while ((m = IMG_RE.exec(doc)) !== null) {
+        const from = m.index, to = from + m[0].length
+        const line = view.state.doc.lineAt(from)
+        const cursorOnLine = view.state.selection.ranges.some(r => r.from >= line.from && r.from <= line.to)
+        if (cursorOnLine) continue
+        builder.add(from, to, Decoration.replace({ widget: new ImageWidget(m[1]) }))
+      }
+      return builder.finish()
+    }
+  }, { decorations: v => v.decorations })
+}
+
+// ── PDF widget decoration (![[file.pdf]]) ────────────────────────────────────
+const PDF_RE = /!\[\[([^\]]+\.pdf)\]\]/gi
+
+class PdfWidget extends WidgetType {
+  constructor(nome, filePath) { super(); this.nome = nome; this.filePath = filePath }
+  toDOM() {
+    const btn = document.createElement('button')
+    btn.textContent = `\u{1F4C4} ${this.nome}`
+    btn.style.cssText = 'background:#2a2a2a;border:1px solid #333;border-radius:6px;color:#e4e4e4;padding:6px 12px;cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:6px;margin:4px 0;'
+    btn.onclick = () => { window.electron?.openPath(this.filePath) }
+    return btn
+  }
+  eq(other) { return other.filePath === this.filePath }
+}
+
+function pdfDecorationPlugin(vaultPathRef) {
+  return ViewPlugin.fromClass(class {
+    constructor(view) { this.decorations = this.build(view) }
+    update(update) {
+      if (update.docChanged || update.viewportChanged || update.selectionSet)
+        this.decorations = this.build(update.view)
+    }
+    build(view) {
+      const vp = vaultPathRef.current
+      if (!vp) return Decoration.none
+      const builder = new RangeSetBuilder()
+      const doc = view.state.doc.toString()
+      PDF_RE.lastIndex = 0
+      let m
+      while ((m = PDF_RE.exec(doc)) !== null) {
+        const from = m.index, to = from + m[0].length
+        const line = view.state.doc.lineAt(from)
+        const cursorOnLine = view.state.selection.ranges.some(r => r.from >= line.from && r.from <= line.to)
+        if (cursorOnLine) continue
+        const filePath = `${vp}/attachments/${m[1]}`
+        builder.add(from, to, Decoration.replace({ widget: new PdfWidget(m[1], filePath) }))
+      }
+      return builder.finish()
+    }
+  }, { decorations: v => v.decorations })
+}
+
 // ── Backlinks panel ─────────────────────────────────────────────────────────
 function BacklinksPanel({ backlinks, onWikiLinkClick }) {
   const [open, setOpen] = useState(false)
@@ -388,6 +548,10 @@ export function NoteEditorCM({
   onConteudoChange,
   onWikiLinkClick,
 }) {
+  const { vaultPath } = useVault()
+  const vaultPathRef = useRef(vaultPath)
+  useEffect(() => { vaultPathRef.current = vaultPath }, [vaultPath])
+
   const containerRef = useRef(null)
   const viewRef = useRef(null)
   const tituloRef = useRef(null)
@@ -462,6 +626,10 @@ export function NoteEditorCM({
               return false
             },
           }),
+          // Attachment plugins — paste/drop + inline image + PDF widget
+          attachmentPasteExtension(vaultPathRef),
+          imageDecorationPlugin(),
+          pdfDecorationPlugin(vaultPathRef),
         ],
       }),
       parent: containerRef.current,

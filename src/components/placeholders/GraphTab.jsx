@@ -5,6 +5,8 @@ import { zoom as d3Zoom, zoomIdentity } from 'd3-zoom'
 import { drag as d3Drag } from 'd3-drag'
 import { getNotasParaGrafo } from '../../db/index'
 import { useVault } from '../../contexts/VaultContext'
+import { mergeGraphNodes, machineNodeColor } from '../../lib/graphHemisphere'
+import { corPorCaderno } from '../../lib/graphColors'
 
 const COR_PADRAO = 'rgba(200,190,175,0.85)'
 
@@ -14,13 +16,13 @@ const DEFAULT_CONFIG = {
   nodeSize: 3,
   labelSize: 9,
   linkWidth: 0.4,
-  linkOpacity: 0.08,
+  linkOpacity: 0.32,
   repulsion: -300,
-  linkDistance: 120,
-  gravity: 0.12,
+  linkDistance: 80,
+  gravity: 0.08,
   showLabels: true,
   colorByCaderno: true,
-  showIsolados: true,
+  showIsolados: false,
 }
 
 // ── Slider reutilizável ──
@@ -31,7 +33,7 @@ function ConfigSlider({ label, value, min, max, step, onChange, dark }) {
       <input
         type="range" min={min} max={max} step={step} value={value}
         onChange={e => onChange(parseFloat(e.target.value))}
-        style={{ flex: 1, accentColor: dark ? '#e8a44a' : '#c17a3a', height: 3 }}
+        style={{ flex: 1, accentColor: '#e4e4e4', height: 3 }}
       />
       <span style={{ fontSize: 9, minWidth: 22, textAlign: 'right', opacity: 0.6 }}>{value}</span>
     </div>
@@ -44,7 +46,7 @@ function ConfigToggle({ label, checked, onChange, dark }) {
     <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, fontSize: 10, cursor: 'pointer' }}>
       <span>{label}</span>
       <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)}
-        style={{ accentColor: dark ? '#e8a44a' : '#c17a3a' }} />
+        style={{ accentColor: '#e4e4e4' }} />
     </label>
   )
 }
@@ -158,7 +160,7 @@ function GrupoItem({ grupo, cadernos, onUpdate, onRemove }) {
                 onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
               >
-                <span style={{ color: '#e8a44a', fontSize: 11, fontWeight: 600 }}>{op.label}</span>
+                <span style={{ color: '#e4e4e4', fontSize: 11, fontWeight: 600 }}>{op.label}</span>
                 <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10, marginLeft: 4 }}>{op.desc}</span>
               </div>
             ))}
@@ -297,8 +299,13 @@ export function GraphTab({ dark }) {
 
     async function construirGrafo() {
       setLoading(true)
-      const notas = await getNotasParaGrafo()
+      const notasHumanas = await getNotasParaGrafo()
       if (cancelled) return
+
+      // Merge machine hemisphere files
+      let machineFiles = []
+      try { machineFiles = await window.electron?.machineContext?.listFiles(vaultPath) || [] } catch {}
+      const notas = mergeGraphNodes(notasHumanas, machineFiles)
 
       if (notas.length === 0) {
         setStats({ notas: 0, arestas: 0 })
@@ -342,7 +349,8 @@ export function GraphTab({ dark }) {
 
       // Preparar nós para d3-force
       const corDoNo = (nota) => {
-        if (!config.colorByCaderno || grupos.length === 0) return COR_PADRAO
+        if (nota.hemisphere === 'machine') return machineNodeColor()
+        // Custom groups have priority
         for (const grupo of grupos) {
           if (!grupo.query) continue
           const q = grupo.query
@@ -353,7 +361,6 @@ export function GraphTab({ dark }) {
             match = path.includes(termo)
           } else if (q.startsWith('section:')) {
             const termo = q.slice(8).toLowerCase().trim()
-            // Colorir notas que LINKAM para o alvo (têm [[alvo]] no conteúdo)
             match = nota.wikilinks?.some(link => link.includes(termo)) ||
                     nota.titulo?.toLowerCase().includes(termo)
           } else {
@@ -363,6 +370,8 @@ export function GraphTab({ dark }) {
           }
           if (match) return grupo.cor
         }
+        // Automatic color by caderno — deterministic hash
+        if (config.colorByCaderno) return corPorCaderno(nota.caderno)
         return COR_PADRAO
       }
       const simNodes = notas.map(nota => {
@@ -447,7 +456,7 @@ export function GraphTab({ dark }) {
         .data(simLinks)
         .enter().append('line')
         .attr('class', 'edge')
-        .style('stroke', 'rgba(180,170,155,0.08)')
+        .style('stroke', `rgba(180,170,155,${config.linkOpacity})`)
         .style('stroke-width', config.linkWidth)
 
       // Nós (grupo com círculo + label)
@@ -495,17 +504,17 @@ export function GraphTab({ dark }) {
           if (isDragging.current) return
           const vizinhos = adjacency.get(d.id)
           // Escala o nó hovereado
-          select(this).select('circle').transition().duration(150)
+          select(this).select('circle').transition().duration(80)
             .attr('r', (config.nodeSize + Math.sqrt(d.conexoes) * 1.2) * 1.3)
           // Dim nós com transição
-          nodeSel.transition().duration(150)
+          nodeSel.transition().duration(80)
             .style('opacity', n => {
               if (n.id === d.id) return 1
               if (vizinhos?.has(n.id)) return 0.9
               return 0.08
             })
           // Edges com transição — conectadas ficam vermelhas
-          linkSel.transition().duration(150)
+          linkSel.transition().duration(80)
             .style('stroke', l => {
               const sId = typeof l.source === 'object' ? l.source.id : l.source
               const tId = typeof l.target === 'object' ? l.target.id : l.target
@@ -539,13 +548,13 @@ export function GraphTab({ dark }) {
         .on('mouseleave', function(event, d) {
           if (isDragging.current) return
           // Volta ao tamanho normal
-          select(this).select('circle').transition().duration(150)
+          select(this).select('circle').transition().duration(80)
             .attr('r', d => config.nodeSize + Math.sqrt(d.conexoes) * 1.2)
           // Volta tudo ao normal
-          nodeSel.transition().duration(200)
+          nodeSel.transition().duration(80)
             .style('opacity', n => n.isIsolado ? 0.4 : 1)
-          linkSel.transition().duration(200)
-            .style('stroke', 'rgba(180,170,155,0.08)')
+          linkSel.transition().duration(80)
+            .style('stroke', `rgba(180,170,155,${config.linkOpacity})`)
             .style('stroke-opacity', 1)
             .style('stroke-width', config.linkWidth)
           g.selectAll('text.hover-label').remove()
@@ -582,6 +591,17 @@ export function GraphTab({ dark }) {
           isDragging.current = false
           select(this).style('cursor', 'pointer')
           if (!event.active) simRef.current?.alphaTarget(0)
+
+          // Reset highlight immediately on drag end
+          select(this).select('circle')
+            .attr('r', config.nodeSize + Math.sqrt(d.conexoes) * 1.2)
+          nodeSel.style('opacity', n => n.isIsolado ? 0.4 : 1)
+          linkSel
+            .style('stroke', `rgba(180,170,155,${config.linkOpacity})`)
+            .style('stroke-opacity', 1)
+            .style('stroke-width', config.linkWidth)
+          g.selectAll('text.hover-label').remove()
+
           // Se não moveu = foi clique = abre nota
           if (!dragMoved) {
             d.fx = null
@@ -590,7 +610,6 @@ export function GraphTab({ dark }) {
               detail: { nota: { id: d.id, titulo: d.titulo, caderno: d.caderno } }
             }))
           } else {
-            // Libera imediatamente — física reintegra ao cluster com fluidez
             d.fx = null
             d.fy = null
             simRef.current?.alpha(0.15).restart()
@@ -810,7 +829,7 @@ export function GraphTab({ dark }) {
                 onClick={() => setConfigOpen(v => !v)}
                 style={{
                   background: 'none', border: 'none', cursor: 'pointer',
-                  color: configOpen ? (dark ? '#e8a44a' : '#c17a3a') : (dark ? '#888880' : '#6B5E4A'),
+                  color: configOpen ? ('#e4e4e4') : (dark ? '#888880' : '#6B5E4A'),
                   fontSize: 13, lineHeight: 1, padding: '0 2px',
                 }}
                 title="Configurações do grafo"
