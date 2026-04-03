@@ -431,12 +431,15 @@ const IMG_RE = /!\[\[([^\]]+\.(png|jpg|jpeg|gif|webp))\]\]/gi
 class ImageWidget extends WidgetType {
   constructor(nome) { super(); this.nome = nome }
   toDOM() {
+    const wrap = document.createElement('div')
+    wrap.style.cssText = 'display:flex;justify-content:center;padding:12px 0;'
     const img = document.createElement('img')
     img.src = `attachment://${encodeURIComponent(this.nome)}`
     img.alt = this.nome
-    img.style.cssText = 'max-width:100%;max-height:400px;display:block;margin:8px 0;border-radius:4px;'
-    img.onerror = () => { img.style.display = 'none' }
-    return img
+    img.style.cssText = 'max-width:100%;width:auto;height:auto;display:block;border-radius:6px;box-shadow:0 2px 12px rgba(0,0,0,0.3);'
+    img.onerror = () => { wrap.style.display = 'none' }
+    wrap.appendChild(img)
+    return wrap
   }
   eq(other) { return other.nome === this.nome }
 }
