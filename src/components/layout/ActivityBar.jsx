@@ -109,7 +109,16 @@ function BarButton({ label, active, onClick, children, className = '' }) {
   )
 }
 
-export default function ActivityBar({ abaAtiva, onAbaChange, onNotaDia }) {
+const IconTerminal = () => (
+  <svg width="13" height="13" viewBox="0 0 13 13" fill="none"
+    stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="1" y="1.5" width="11" height="10" rx="2"/>
+    <polyline points="3.5,5 5.5,7 3.5,9"/>
+    <line x1="7" y1="9" x2="9.5" y2="9"/>
+  </svg>
+)
+
+export default function ActivityBar({ abaAtiva, onAbaChange, onNotaDia, terminalOpen, onToggleTerminal }) {
   const isElectron = typeof window !== 'undefined' && window.electron
 
   return (
@@ -136,6 +145,11 @@ export default function ActivityBar({ abaAtiva, onAbaChange, onNotaDia }) {
       </BarButton>
 
       <div className="flex-1" />
+
+      {/* Terminal IA */}
+      <BarButton label="IA (Terminal)" active={terminalOpen} onClick={onToggleTerminal} className="mb-1">
+        <IconTerminal />
+      </BarButton>
 
       {/* Configurações */}
       <BarButton label="Configurações" active={abaAtiva === 'config'} onClick={() => onAbaChange('config')} className="mb-3">

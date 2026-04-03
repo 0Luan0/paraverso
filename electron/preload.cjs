@@ -53,4 +53,46 @@ contextBridge.exposeInMainWorld('electron', {
 
   stopFind: () =>
     ipcRenderer.invoke('find:stop'),
+
+  // ── Machine Hemisphere (AI private workspace) ──────────────────────────────
+  machineContext: {
+    init: (vaultPath) =>
+      ipcRenderer.invoke('machine:init', vaultPath),
+    readContext: (filePath) =>
+      ipcRenderer.invoke('machine:readContext', filePath),
+    writeContext: (filePath, content) =>
+      ipcRenderer.invoke('machine:writeContext', filePath, content),
+    listFiles: (vaultPath) =>
+      ipcRenderer.invoke('machine:listFiles', vaultPath),
+  },
+
+  // ── AI API Key (safeStorage — OS keychain) ─────────────────────────────────
+  ai: {
+    saveApiKey: (apiKey) =>
+      ipcRenderer.invoke('ai:saveApiKey', apiKey),
+    getApiKey: () =>
+      ipcRenderer.invoke('ai:getApiKey'),
+    deleteApiKey: () =>
+      ipcRenderer.invoke('ai:deleteApiKey'),
+  },
+
+  // ── Terminal embutido (node-pty) ───────────────────────────────────────────
+  terminal: {
+    start: (vaultPath) =>
+      ipcRenderer.invoke('terminal:start', vaultPath),
+    write: (data) =>
+      ipcRenderer.invoke('terminal:write', data),
+    resize: (cols, rows) =>
+      ipcRenderer.invoke('terminal:resize', cols, rows),
+    kill: () =>
+      ipcRenderer.invoke('terminal:kill'),
+    onData: (callback) =>
+      ipcRenderer.on('terminal:data', (_e, data) => callback(data)),
+    onExit: (callback) =>
+      ipcRenderer.on('terminal:exit', (_e, code) => callback(code)),
+    offData: () =>
+      ipcRenderer.removeAllListeners('terminal:data'),
+    offExit: () =>
+      ipcRenderer.removeAllListeners('terminal:exit'),
+  },
 })

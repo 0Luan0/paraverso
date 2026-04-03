@@ -36,7 +36,7 @@ const el = () => window.electron
 // Reserved folder names — excluded from cadernos list
 // 'templates' foi removido: a pasta de templates agora aparece como caderno normal.
 // O nome da pasta de templates é configurável e lido de configuredTemplatesDir.
-const RESERVED_DIRS = new Set(['meses'])
+const RESERVED_DIRS = new Set(['meses', '_machine'])
 
 // Pasta de templates configurável (padrão: 'templates'). Atualizada pelo ConfigTab.
 let configuredTemplatesDir = 'templates'

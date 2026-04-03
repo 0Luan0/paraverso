@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTheme } from './hooks/useTheme'
 import { useTexture } from './hooks/useTexture'
 import { VaultProvider, useVault } from './contexts/VaultContext'
@@ -9,6 +9,7 @@ import { GraphTab } from './components/placeholders/GraphTab'
 import { ConfigTab } from './components/config/ConfigTab'
 import { QuickSwitcher } from './components/QuickSwitcher'
 import { VaultSetup } from './components/VaultSetup'
+import { TerminalPane } from './components/terminal/TerminalPane'
 
 // ── Inner app — has access to VaultContext ────────────────────────────────────
 function AppInner() {
@@ -19,6 +20,57 @@ function AppInner() {
   const [quickSwitcher, setQuickSwitcher] = useState(false)
   const [notaPendente, setNotaPendente] = useState(null)
   const [notaAtivaId, setNotaAtivaId] = useState(null)
+
+  // Terminal panel state
+  const [terminalOpen, setTerminalOpen] = useState(false)
+  const [terminalHeight, setTerminalHeight] = useState(() => {
+    const saved = localStorage.getItem('paraverso-terminal-height')
+    return saved ? parseInt(saved, 10) : 300
+  })
+  const [terminalKey, setTerminalKey] = useState(0)
+  const isDraggingRef = useRef(false)
+  const containerRef = useRef(null)
+
+  const toggleTerminal = useCallback(() => {
+    setTerminalOpen(prev => {
+      if (!prev) {
+        // Opening — increment key to force fresh mount
+        setTerminalKey(k => k + 1)
+      }
+      return !prev
+    })
+  }, [])
+
+  // Resize handle drag logic
+  const handleResizeStart = useCallback((e) => {
+    e.preventDefault()
+    isDraggingRef.current = true
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
+
+    const onMove = (moveEvent) => {
+      if (!isDraggingRef.current || !containerRef.current) return
+      const containerRect = containerRef.current.getBoundingClientRect()
+      const newHeight = containerRect.bottom - moveEvent.clientY
+      const clamped = Math.max(150, Math.min(newHeight, containerRect.height - 200))
+      setTerminalHeight(clamped)
+    }
+
+    const onUp = () => {
+      isDraggingRef.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      setTerminalHeight(h => {
+        localStorage.setItem('paraverso-terminal-height', String(h))
+        return h
+      })
+    }
+
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [])
 
   // Limpa tema customizado legado (se existir)
   useEffect(() => { localStorage.removeItem('paraverso-tema-custom') }, [])
@@ -109,17 +161,43 @@ function AppInner() {
         abaAtiva={aba}
         onAbaChange={setAba}
         onNotaDia={handleNotaDia}
+        terminalOpen={terminalOpen}
+        onToggleTerminal={toggleTerminal}
       />
 
-      {/* Conteúdo da aba ativa */}
-      <div className="flex-1 flex overflow-hidden min-w-0">
-        {aba === 'mes'    && <MesTab />}
-        {/* NotasTab mantido montado (display:none) para preservar estado ao trocar de aba */}
-        <div style={{ display: aba === 'notas' ? 'contents' : 'none' }}>
-          <NotasTab textura={textura} notaPendente={notaPendente} onNotaAberta={() => setNotaPendente(null)} onNotaAtiva={setNotaAtivaId} />
+      {/* Conteúdo da aba ativa + terminal inferior */}
+      <div ref={containerRef} className="flex-1 flex flex-col overflow-hidden min-w-0">
+        {/* Main content area */}
+        <div className="flex-1 flex overflow-hidden min-w-0" style={terminalOpen ? { minHeight: 200 } : undefined}>
+          {aba === 'mes'    && <MesTab />}
+          {/* NotasTab mantido montado (display:none) para preservar estado ao trocar de aba */}
+          <div style={{ display: aba === 'notas' ? 'contents' : 'none' }}>
+            <NotasTab textura={textura} notaPendente={notaPendente} onNotaAberta={() => setNotaPendente(null)} onNotaAtiva={setNotaAtivaId} />
+          </div>
+          {aba === 'grafo'  && <GraphTab dark={dark} />}
+          {aba === 'config' && <ConfigTab dark={dark} toggleTheme={toggleTheme} textura={textura} setTexturaTo={setTexturaTo} />}
         </div>
-        {aba === 'grafo'  && <GraphTab dark={dark} />}
-        {aba === 'config' && <ConfigTab dark={dark} toggleTheme={toggleTheme} textura={textura} setTexturaTo={setTexturaTo} />}
+
+        {/* Terminal panel */}
+        {terminalOpen && vaultPath && (
+          <>
+            {/* Resize handle */}
+            <div
+              onMouseDown={handleResizeStart}
+              style={{
+                height: '4px',
+                background: '#2a2a2a',
+                cursor: 'row-resize',
+                flexShrink: 0,
+                borderTop: '1px solid #333',
+              }}
+            />
+            {/* Terminal container */}
+            <div style={{ height: terminalHeight, flexShrink: 0, overflow: 'hidden' }}>
+              <TerminalPane key={terminalKey} vaultPath={vaultPath} onClose={() => setTerminalOpen(false)} />
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
