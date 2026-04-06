@@ -10,13 +10,13 @@ export async function getMesPath(vaultPath, ano, mes) {
   return el().joinPath(vaultPath, 'meses', `${mesId(ano, mes)}.md`)
 }
 
-export async function getMesVault(vaultPath, ano, mes) {
+export async function getMonth(vaultPath, ano, mes) {
   const filePath = await getMesPath(vaultPath, ano, mes)
   const exists = await el().exists(filePath)
 
   if (!exists) {
     const novo = criarMesVazio(ano, mes)
-    await salvarMesVault(vaultPath, novo)
+    await saveMonth(vaultPath, novo)
     return novo
   }
 
@@ -28,14 +28,14 @@ export async function getMesVault(vaultPath, ano, mes) {
   return frontmatter || {}
 }
 
-export async function salvarMesVault(vaultPath, mesObj) {
+export async function saveMonth(vaultPath, mesObj) {
   const filePath = await getMesPath(vaultPath, mesObj.ano, mesObj.mes)
   const { resumo, ...frontmatter } = mesObj
   const content = serializeMdFile(frontmatter, resumo || '')
   await el().writeFile(filePath, content)
 }
 
-export async function getTodosMesesVault(vaultPath) {
+export async function getAllMonths(vaultPath) {
   const mesesDir = await el().joinPath(vaultPath, 'meses')
   const files = await el().readdir(mesesDir)
   const mdFiles = (files || []).filter(f => f.endsWith('.md'))

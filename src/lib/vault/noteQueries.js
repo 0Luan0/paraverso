@@ -6,39 +6,39 @@ import { el, filenameToId } from './shared.js'
 import { getTemplatesDir } from './shared.js'
 import { parseMdFile } from './yamlUtils.js'
 import { _getAllMdPaths, _topDir, _subpasta } from './pathUtils.js'
-import { lerNotaVault } from './noteIO.js'
+import { readNote } from './noteIO.js'
 
 // ── Note queries ─────────────────────────────────────────────────────────────
 
-export async function getNotasPorCadernoVault(vaultPath, caderno) {
+export async function getNotesByNotebook(vaultPath, caderno) {
   const allPaths = await _getAllMdPaths(vaultPath)
   const notas = []
 
   for (const filePath of allPaths) {
     if (_topDir(filePath, vaultPath) !== caderno.normalize('NFC')) continue
     try {
-      const nota = await lerNotaVault(filePath, caderno)
+      const nota = await readNote(filePath, caderno)
       if (nota?.id) notas.push({ ...nota, subpasta: _subpasta(filePath, vaultPath) })
     } catch { /* skip corrupt */ }
   }
   return notas.sort((a, b) => (b.editadaEm || 0) - (a.editadaEm || 0))
 }
 
-export async function getTodasNotasVault(vaultPath) {
+export async function getAllNotes(vaultPath) {
   const allPaths = await _getAllMdPaths(vaultPath)
   const notas = []
 
   for (const filePath of allPaths) {
     const caderno = _topDir(filePath, vaultPath)
     try {
-      const nota = await lerNotaVault(filePath, caderno)
+      const nota = await readNote(filePath, caderno)
       if (nota?.id) notas.push(nota)
     } catch { /* skip corrupt */ }
   }
   return notas
 }
 
-export async function getNotasParaGrafoVault(vaultPath) {
+export async function getNotesForGraph(vaultPath) {
   const allPaths = await _getAllMdPaths(vaultPath)
   const wikilinkRe = /\[\[([^\]\n]+)\]\]/g
 
@@ -93,7 +93,7 @@ export async function getNotasParaGrafoVault(vaultPath) {
   return settled.filter(r => r.status === 'fulfilled').map(r => r.value)
 }
 
-export async function getTodasNotasMetadataVault(vaultPath) {
+export async function getAllNotesMetadata(vaultPath) {
   const allPaths = await _getAllMdPaths(vaultPath)
   const notas = []
 
@@ -133,7 +133,7 @@ export async function getTodasNotasMetadataVault(vaultPath) {
 
 // ── Backlinks ────────────────────────────────────────────────────────────────
 
-export async function getBacklinksVault(vaultPath, titulo) {
+export async function getBacklinks(vaultPath, titulo) {
   if (!titulo) return []
   const allPaths = await _getAllMdPaths(vaultPath)
   const backlinks = []
@@ -167,14 +167,14 @@ export async function getBacklinksVault(vaultPath, titulo) {
 
 // ── Templates ────────────────────────────────────────────────────────────────
 
-export async function getTemplatesVault(vaultPath) {
+export async function getTemplates(vaultPath) {
   const templatesDir = await el().joinPath(vaultPath, getTemplatesDir())
   const files = await el().readdir(templatesDir).catch(() => [])
   const mdFiles = (files || []).filter(f => f.endsWith('.md'))
   return mdFiles.map(f => ({ filename: f, titulo: filenameToId(f) }))
 }
 
-export async function lerTemplateVault(vaultPath, filename) {
+export async function readTemplate(vaultPath, filename) {
   const filePath = await el().joinPath(vaultPath, getTemplatesDir(), filename)
   const raw = await el().readFile(filePath)
   const { body } = parseMdFile(raw)

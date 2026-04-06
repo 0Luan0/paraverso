@@ -8,7 +8,7 @@ import { _getAllMdPaths } from './pathUtils.js'
 
 const CADERNOS_PADRAO = ['Inbox', 'Diário', 'Arquivo']
 
-export async function getCadernosVault(vaultPath) {
+export async function getNotebooks(vaultPath) {
   const entries = await el().readdir(vaultPath, { dirsOnly: true })
   const tplDir = (getTemplatesDir() || 'templates').toLowerCase()
   const existingDirs = (entries || []).filter(e =>
@@ -26,13 +26,13 @@ export async function getCadernosVault(vaultPath) {
   return existingDirs.map((nome, i) => ({ id: nome.toLowerCase(), nome, ordem: i }))
 }
 
-export async function criarCadernoVault(vaultPath, nome) {
+export async function createNotebook(vaultPath, nome) {
   const dirPath = await el().joinPath(vaultPath, sanitizeName(nome))
   await el().mkdir(dirPath)
   return { id: nome.toLowerCase(), nome, ordem: 99 }
 }
 
-export async function moverCadernoVault(vaultPath, fromRelPath, toRelPath) {
+export async function moveNotebook(vaultPath, fromRelPath, toRelPath) {
   const from = (fromRelPath || '').trim().replace(/^[/\\]+|[/\\]+$/g, '')
   const to   = (toRelPath   || '').trim().replace(/^[/\\]+|[/\\]+$/g, '')
   if (!from || !to) throw new Error('Paths inválidos')
@@ -92,7 +92,7 @@ export async function remapCadernoConfigs(fromRelPath, toRelPath) {
   return updates
 }
 
-export async function deletarCadernoVault(vaultPath, relPath) {
+export async function deleteNotebook(vaultPath, relPath) {
   const rel = (relPath || '').trim().replace(/^[/\\]+|[/\\]+$/g, '')
   if (!rel) throw new Error('Path vazio')
 
@@ -113,7 +113,7 @@ export async function deletarCadernoVault(vaultPath, relPath) {
   return true
 }
 
-export async function criarSubpastaVault(vaultPath, parentRelPath, nome) {
+export async function createSubfolder(vaultPath, parentRelPath, nome) {
   const nomeSane = sanitizeName(nome)
   if (!nomeSane || nomeSane === 'sem-titulo') throw new Error('Nome inválido')
 
@@ -134,13 +134,13 @@ export async function criarSubpastaVault(vaultPath, parentRelPath, nome) {
   return partes.join('/')
 }
 
-export async function resolverPastaAbsVault(vaultPath, relPath) {
+export async function resolveAbsolutePath(vaultPath, relPath) {
   const rel = (relPath || '').trim().replace(/^[/\\]+|[/\\]+$/g, '')
   if (!rel) return vaultPath
   return el().joinPath(vaultPath, ...rel.split(/[/\\]/))
 }
 
-export async function propagarRenameVault(vaultPath, tituloAntigo, tituloNovo) {
+export async function propagateRename(vaultPath, tituloAntigo, tituloNovo) {
   if (!tituloAntigo || !tituloNovo) return []
   const oldNorm = String(tituloAntigo).normalize('NFC')
   const newNorm = String(tituloNovo).normalize('NFC')

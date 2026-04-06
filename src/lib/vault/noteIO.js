@@ -38,7 +38,7 @@ function _safeMarkdownParaTipTapJson(md) {
 
 // ── Save ─────────────────────────────────────────────────────────────────────
 
-export async function salvarNotaVault(vaultPath, nota) {
+export async function saveNote(vaultPath, nota) {
   const resolve = await acquireSaveLock(nota.id)
   try {
     const baseFilename = sanitizeName(nota.titulo || 'sem-titulo')
@@ -96,7 +96,7 @@ export async function salvarNotaVault(vaultPath, nota) {
 
 // ── Move ─────────────────────────────────────────────────────────────────────
 
-export async function moverNotaVault(vaultPath, nota, novoCaderno) {
+export async function moveNote(vaultPath, nota, novoCaderno) {
   console.log('[moverNotaVault] chamado:', { vaultPath, id: nota?.id, titulo: nota?.titulo, _filename: nota?._filename, caderno: nota?.caderno, subpasta: nota?.subpasta, novoCaderno })
   const cadernoAtual = sanitizeName(nota.caderno || '')
   const cadernoNovo  = sanitizeName(novoCaderno || '')
@@ -140,7 +140,7 @@ export async function moverNotaVault(vaultPath, nota, novoCaderno) {
 
 // ── Read ─────────────────────────────────────────────────────────────────────
 
-export async function lerNotaVault(filePath, cadernoHint = '') {
+export async function readNote(filePath, cadernoHint = '') {
   const raw = await el().readFile(filePath)
   const { frontmatter, body, format } = parseMdFile(raw)
   const filename = filePath.split(/[/\\]/).pop().replace(/\.md$/i, '').normalize('NFC')
@@ -199,7 +199,7 @@ export async function lerNotaVault(filePath, cadernoHint = '') {
 
 // ── Delete ───────────────────────────────────────────────────────────────────
 
-export async function deletarNotaVault(vaultPath, _caderno, id) {
+export async function deleteNote(vaultPath, _caderno, id) {
   let lastErr = null
   try {
     const allPaths = await _getAllMdPaths(vaultPath)

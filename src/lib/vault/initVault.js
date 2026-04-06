@@ -4,7 +4,7 @@
 
 import { el } from './shared.js'
 import { getTemplatesDir } from './shared.js'
-import { getCadernosVault } from './folderOps.js'
+import { getNotebooks } from './folderOps.js'
 import { _getAllMdPaths } from './pathUtils.js'
 
 // ── Onboarding notes ─────────────────────────────────────────────────────────
@@ -363,7 +363,7 @@ export async function initVault(vaultPath) {
   await el().mkdir(await el().joinPath(vaultPath, 'meses'))
   await el().mkdir(await el().joinPath(vaultPath, getTemplatesDir()))
 
-  const cadernos = await getCadernosVault(vaultPath)
+  const cadernos = await getNotebooks(vaultPath)
 
   try {
     const allPaths = await _getAllMdPaths(vaultPath).catch(() => [])
