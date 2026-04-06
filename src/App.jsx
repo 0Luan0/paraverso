@@ -198,10 +198,16 @@ function AppInner() {
 
   // Evento global: qualquer componente pode pedir "abrir esta nota na aba Notas"
   useEffect(() => {
-    function onAbrirEmNotas(e) { handleAbrirNota(e.detail?.nota) }
+    function onAbrirEmNotas(e) {
+      const nota = e.detail?.nota
+      if (nota) {
+        setNotaPendente(nota)
+        setAba('notas')
+      }
+    }
     window.addEventListener('paraverso:abrir-em-notas', onAbrirEmNotas)
     return () => window.removeEventListener('paraverso:abrir-em-notas', onAbrirEmNotas)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   // Still loading vault path from config
   if (loading) {

@@ -594,21 +594,28 @@ function registerIpcHandlers() {
   // ── Machine file watcher ──────────────────────────────────────────────────
 
   let machineWatcher = null
+  const machineDebounceTimers = new Map()
 
   ipcMain.handle('machine:watch', (event, machinePath) => {
     if (machineWatcher) { try { machineWatcher.close() } catch {} }
+    machineDebounceTimers.clear()
 
     try {
       machineWatcher = fs.watch(machinePath, { recursive: true }, (eventType, filename) => {
         if (filename && filename.endsWith('.md')) {
-          const [win] = BrowserWindow.getAllWindows()
-          if (win && !win.isDestroyed()) {
-            win.webContents.send('machine:fileChanged', {
-              type: eventType,
-              filename,
-              path: path.join(machinePath, filename),
-            })
-          }
+          // Debounce per filename — fs.watch fires multiple events per save
+          clearTimeout(machineDebounceTimers.get(filename))
+          machineDebounceTimers.set(filename, setTimeout(() => {
+            machineDebounceTimers.delete(filename)
+            const [win] = BrowserWindow.getAllWindows()
+            if (win && !win.isDestroyed()) {
+              win.webContents.send('machine:fileChanged', {
+                type: eventType,
+                filename,
+                path: path.join(machinePath, filename),
+              })
+            }
+          }, 300))
         }
       })
     } catch {}
