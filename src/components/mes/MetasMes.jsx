@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { splitCadernoPath } from '../../db/index'
 
 export function MetasMes({ mesObj, onUpdate }) {
   const [novaCategoria, setNovaCategoria] = useState('')
@@ -16,7 +17,7 @@ export function MetasMes({ mesObj, onUpdate }) {
     onUpdate({ ...mesObj, metas })
   }
 
-  function adicionarItem(catId) {
+  async function adicionarItem(catId) {
     const texto = (novoItem[catId] || '').trim()
     if (!texto) return
 
@@ -32,10 +33,24 @@ export function MetasMes({ mesObj, onUpdate }) {
     setNovoItem(prev => ({ ...prev, [catId]: '' }))
 
     // Dispara criação automática de nota — NotasTab ouve este evento
-    // O caderno alvo é o nome da categoria (ex: "Leituras", "Projetos")
-    window.dispatchEvent(new CustomEvent('paraverso:criar-nota', {
-      detail: { titulo: texto, caderno: categoriaNome }
-    }))
+    // Se journalCaderno estiver configurado, categoria vira subpasta dele.
+    // Suporta journalCaderno nested (ex: "Arquivo/Codex") após folder moves:
+    //   journalCaderno="Codex"          categoria="Leituras" → Codex/Leituras
+    //   journalCaderno="Arquivo/Codex"  categoria="Leituras" → Arquivo/Codex/Leituras
+    const journalCaderno = await window.electron?.getConfig('journalCaderno')
+    if (!journalCaderno) {
+      console.warn('[MetasMes] journalCaderno não configurado. Categoria virará pasta na raiz. Configure em Config → Notas diárias.')
+    }
+    let detail
+    if (journalCaderno) {
+      const { caderno: journalCad, subpasta: journalSub } = splitCadernoPath(journalCaderno)
+      const subpastaFinal = journalSub ? `${journalSub}/${categoriaNome}` : categoriaNome
+      detail = { titulo: texto, caderno: journalCad, subpasta: subpastaFinal }
+    } else {
+      detail = { titulo: texto, caderno: categoriaNome }
+    }
+
+    window.dispatchEvent(new CustomEvent('paraverso:criar-nota', { detail }))
   }
 
   function deletarItem(catId, itemIdx) {

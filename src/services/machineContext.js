@@ -153,6 +153,57 @@ updated: ${now}
 `
 }
 
+function contextoContent() {
+  const now = new Date().toISOString()
+  return `---
+type: machine-context
+subtype: contexto-unificado
+version: 1
+updated: ${now}
+---
+
+# Contexto — Pessoa
+
+## Estilo de comunicação
+[A IA preencherá com o tempo]
+
+## Interesses e referências
+[A IA preencherá com o tempo]
+
+## Estilo de escrita
+[A IA preencherá com o tempo]
+
+## Forma de pensar
+[A IA preencherá com o tempo]
+
+## Conexões e padrões
+[A IA preencherá com o tempo]
+`
+}
+
+function contextoTemplate() {
+  return `---
+type: machine-template
+command: contexto
+---
+
+# Template — Análise de Contexto Unificado
+
+Você é um analista de perfil pessoal. Analise as notas do vault e crie um retrato completo da pessoa em um único documento.
+
+A partir das notas fornecidas, extraia e organize:
+
+1. **Estilo de comunicação** — como esta pessoa se expressa, tom, formalidade
+2. **Interesses e referências** — livros, autores, temas recorrentes, áreas de conhecimento
+3. **Estilo de escrita** — estrutura, vocabulário, como conecta ideias, exemplos característicos
+4. **Forma de pensar** — padrões de raciocínio, como aborda problemas, valores intelectuais
+5. **Conexões e padrões** — temas que se cruzam, interesses interdisciplinares
+
+Escreva de forma direta e concisa. Use exemplos concretos das notas quando possível.
+Atualize o arquivo _machine/contexts/contexto.md com o resultado completo.
+`
+}
+
 function readmeContent() {
   return `# Hemisfério Máquina
 
@@ -254,8 +305,10 @@ export const INITIAL_FILES = {
   [`${CONTEXTS_DIR}/pessoa.md`]: pessoaContent,
   [`${CONTEXTS_DIR}/interesses.md`]: interessesContent,
   [`${CONTEXTS_DIR}/estilo.md`]: estiloContent,
+  [`${CONTEXTS_DIR}/contexto.md`]: contextoContent,
   [`${TEMPLATES_DIR}/pesquise.md`]: pesquiseTemplate,
   [`${TEMPLATES_DIR}/brainstorm.md`]: brainstormTemplate,
   [`${TEMPLATES_DIR}/escrita.md`]: escritaTemplate,
+  [`${TEMPLATES_DIR}/contexto.md`]: contextoTemplate,
   ['README.md']: readmeContent,
 }

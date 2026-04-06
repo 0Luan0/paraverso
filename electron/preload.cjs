@@ -27,8 +27,14 @@ contextBridge.exposeInMainWorld('electron', {
   deleteFile: (filePath) =>
     ipcRenderer.invoke('fs:deleteFile', filePath),
 
+  rmrf: (dirPath) =>
+    ipcRenderer.invoke('fs:rmrf', dirPath),
+
   openPath: (filePath) =>
     ipcRenderer.invoke('shell:openPath', filePath),
+
+  showItemInFinder: (targetPath) =>
+    ipcRenderer.invoke('shell:showItemInFinder', targetPath),
 
   // ── Dialog ───────────────────────────────────────────────────────────────
   openFolder: () =>
@@ -86,19 +92,17 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.removeAllListeners('browser:summarize'),
   },
 
-  // ── Vault scan (read-only) ──────────────────────────────────────────────────
+  // ── Vault (read-only + tasks) ───────────────────────────────────────────────
   vault: {
     scanHuman: (vaultPath) =>
       ipcRenderer.invoke('vault:scanHuman', vaultPath),
-    runScan: (vaultPath, notes, targetFile, templateContent) =>
-      ipcRenderer.invoke('vault:runScan', vaultPath, notes, targetFile, templateContent),
     addTask: (notePath, taskText) =>
       ipcRenderer.invoke('vault:addTask', notePath, taskText),
     saveAttachment: (vaultPath, nome, buffer) =>
       ipcRenderer.invoke('attachment:save', vaultPath, nome, buffer),
   },
 
-  // ── Terminal embutido (node-pty) ───────────────────────────────────────────
+  // ── Terminal embutido (shell puro) ─────────────────────────────────────────
   terminal: {
     start: (vaultPath) =>
       ipcRenderer.invoke('terminal:start', vaultPath),

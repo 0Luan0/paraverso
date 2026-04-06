@@ -112,7 +112,9 @@ export async function getNotasParaGrafo() {
   return db.notas.toArray()
 }
 
-export function criarNotaVazia(caderno = 'Pensamentos') {
+export function criarNotaVazia(caderno = '') {
+  // caderno '' = nota direto na raiz do vault (não organizada)
+  // Callers que precisam de um caderno default resolvem antes (via config ou cadernoAtivo)
   return {
     id: crypto.randomUUID(),
     titulo: 'Sem título',
@@ -122,6 +124,43 @@ export function criarNotaVazia(caderno = 'Pensamentos') {
     criadaEm: Date.now(),
     editadaEm: Date.now(),
   }
+}
+
+// ── FOLDER MOVES & HELPERS (Obsidian-like) ────────────────────────────────────
+
+/** Move (renomeia) uma pasta inteira no vault. Relativo ao vault. */
+export async function moverCaderno(vaultPath, fromRelPath, toRelPath) {
+  return vault.moverCadernoVault(vaultPath, fromRelPath, toRelPath)
+}
+
+/** Reescreve configs de caderno após um folder move. */
+export async function remapCadernoConfigs(fromRelPath, toRelPath) {
+  return vault.remapCadernoConfigs(fromRelPath, toRelPath)
+}
+
+/** Quebra path de caderno em { caderno, subpasta }. */
+export function splitCadernoPath(relPath) {
+  return vault.splitCadernoPath(relPath)
+}
+
+/** Propaga rename de nota nos wikilinks [[]] de todo o vault. */
+export async function propagarRename(vaultPath, tituloAntigo, tituloNovo) {
+  return vault.propagarRenameVault(vaultPath, tituloAntigo, tituloNovo)
+}
+
+/** Deleta uma pasta recursivamente (com guards de reserved dirs). */
+export async function deletarCaderno(vaultPath, relPath) {
+  return vault.deletarCadernoVault(vaultPath, relPath)
+}
+
+/** Cria uma subpasta dentro de um parent (ou na raiz se parent vazio). */
+export async function criarSubpasta(vaultPath, parentRelPath, nome) {
+  return vault.criarSubpastaVault(vaultPath, parentRelPath, nome)
+}
+
+/** Caminho absoluto de uma pasta do vault (pra Finder). */
+export async function resolverPastaAbs(vaultPath, relPath) {
+  return vault.resolverPastaAbsVault(vaultPath, relPath)
 }
 
 // ── CADERNOS ──────────────────────────────────────────────────────────────────

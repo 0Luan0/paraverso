@@ -45,16 +45,21 @@ export function VaultProvider({ children }) {
     if (!window.electron) return
     const chosen = await window.electron.openFolder()
     if (!chosen) return
-    await initVault(chosen)
+    // CRÍTICO: setConfig ANTES de initVault. O validatePath em main.cjs lê
+    // o vault atual do config.json pra decidir se o mkdir/writeFile é permitido.
+    // Se a gente rodar initVault primeiro, ele tenta mexer em paths que main.cjs
+    // ainda considera "fora do vault".
     await window.electron.setConfig('vaultPath', chosen)
+    await initVault(chosen)
     applyVaultPath(chosen)
   }, [])
 
   const changeVault = useCallback(async () => {
     const chosen = await window.electron.openFolder()
     if (!chosen) return
-    await initVault(chosen)
+    // CRÍTICO: setConfig ANTES de initVault — ver comentário em chooseVault.
     await window.electron.setConfig('vaultPath', chosen)
+    await initVault(chosen)
     applyVaultPath(chosen)
   }, [])
 

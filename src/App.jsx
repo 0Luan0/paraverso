@@ -12,6 +12,7 @@ import { VaultSetup } from './components/VaultSetup'
 import { TerminalPane } from './components/terminal/TerminalPane'
 import BrowserPane from './components/browser/BrowserPane'
 import MachineToast from './components/ui/MachineToast'
+import Toast from './components/ui/Toast'
 
 // ── Inner app — has access to VaultContext ────────────────────────────────────
 function AppInner() {
@@ -48,17 +49,17 @@ function AppInner() {
   // Machine file watcher + toasts
   const [machineToasts, setMachineToasts] = useState([])
 
+  // Toast genérico (paraverso:toast) — usado por folder moves, rename propagation, etc.
+  const [toasts, setToasts] = useState([])
+
   const toggleTerminal = useCallback(() => {
     setTerminalOpen(prev => {
-      if (!prev) {
-        // Opening — increment key to force fresh mount
-        setTerminalKey(k => k + 1)
-      }
+      if (!prev) setTerminalKey(k => k + 1)
       return !prev
     })
   }, [])
 
-  // Resize handle drag logic
+  // Terminal resize handle
   const handleResizeStart = useCallback((e) => {
     e.preventDefault()
     isDraggingRef.current = true
@@ -123,9 +124,22 @@ function AppInner() {
   // Limpa tema customizado legado (se existir)
   useEffect(() => { localStorage.removeItem('paraverso-tema-custom') }, [])
 
-  // Watch _machine/ for AI file changes → show toasts
+  // Listener global de toasts genéricos (folder moves, rename propagation, erros)
+  useEffect(() => {
+    function handleToast(e) {
+      const detail = e.detail || {}
+      const id = Date.now() + Math.random()
+      setToasts(prev => [...prev, { id, tipo: detail.tipo || 'info', mensagem: detail.mensagem || '' }])
+    }
+    window.addEventListener('paraverso:toast', handleToast)
+    return () => window.removeEventListener('paraverso:toast', handleToast)
+  }, [])
+
+  // Ensure _machine/ structure exists, then watch for AI file changes → show toasts
   useEffect(() => {
     if (!vaultPath || !window.electron?.machineContext?.watch) return
+    // Init _machine/ structure (creates contexts/, templates/ and default files if missing)
+    window.electron.machineContext.init(vaultPath).catch(() => {})
     const machinePath = vaultPath + '/_machine'
     window.electron.machineContext.watch(machinePath)
 
@@ -232,7 +246,7 @@ function AppInner() {
         onToggleBrowser={toggleBrowser}
       />
 
-      {/* Conteúdo da aba ativa + terminal inferior */}
+      {/* Conteúdo da aba ativa */}
       <div ref={containerRef} className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Main content area — editor (+ optional browser side panel) */}
         <div className="flex-1 flex overflow-hidden min-w-0" style={terminalOpen ? { minHeight: 200 } : undefined}>
@@ -271,7 +285,6 @@ function AppInner() {
         {/* Terminal panel */}
         {terminalOpen && vaultPath && (
           <>
-            {/* Resize handle */}
             <div
               onMouseDown={handleResizeStart}
               style={{
@@ -282,7 +295,6 @@ function AppInner() {
                 borderTop: '1px solid #333',
               }}
             />
-            {/* Terminal container */}
             <div style={{ height: terminalHeight, flexShrink: 0, overflow: 'hidden' }}>
               <TerminalPane key={terminalKey} vaultPath={vaultPath} onClose={() => setTerminalOpen(false)} />
             </div>
@@ -290,7 +302,7 @@ function AppInner() {
         )}
       </div>
 
-      {/* Machine toasts */}
+      {/* Toasts (machine + genérico) */}
       <div style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 1000 }}>
         {machineToasts.map(toast => (
           <MachineToast
@@ -298,6 +310,14 @@ function AppInner() {
             filename={toast.filename}
             type={toast.type}
             onClose={() => setMachineToasts(prev => prev.filter(t => t.id !== toast.id))}
+          />
+        ))}
+        {toasts.map(toast => (
+          <Toast
+            key={toast.id}
+            tipo={toast.tipo}
+            mensagem={toast.mensagem}
+            onClose={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
           />
         ))}
       </div>

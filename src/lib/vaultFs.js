@@ -33,9 +33,8 @@ import { mesId, criarMesVazio } from './mesUtils'
 
 const el = () => window.electron
 
-// Reserved folder names — excluded from cadernos list
-// 'templates' foi removido: a pasta de templates agora aparece como caderno normal.
-// O nome da pasta de templates é configurável e lido de configuredTemplatesDir.
+// Reserved folder names — excluded from cadernos list and general file search.
+// '_machine' is shown via its own dedicated section in the sidebar (NotesSidebar → MÁQUINA).
 const RESERVED_DIRS = new Set(['meses', '_machine'])
 
 // Pasta de templates configurável (padrão: 'templates'). Atualizada pelo ConfigTab.
@@ -252,8 +251,18 @@ export async function salvarNotaVault(vaultPath, nota) {
   const resolve = await acquireSaveLock(nota.id)
   try {
     const baseFilename = sanitizeName(nota.titulo || 'sem-titulo')
-    const cadernoDir   = sanitizeName(nota.caderno || 'Pensamentos')
-    const dirPath      = await el().joinPath(vaultPath, cadernoDir)
+    // caderno vazio = nota direto na raiz do vault (sem organização)
+    const cadernoDir   = nota.caderno ? sanitizeName(nota.caderno) : ''
+    const subpastaDir  = nota.subpasta ? sanitizeName(nota.subpasta) : null
+    let dirPath
+    if (cadernoDir && subpastaDir) {
+      dirPath = await el().joinPath(vaultPath, cadernoDir, subpastaDir)
+    } else if (cadernoDir) {
+      dirPath = await el().joinPath(vaultPath, cadernoDir)
+    } else {
+      // Nota raiz — pasta destino é o próprio vaultPath
+      dirPath = vaultPath
+    }
 
     // ── Resolve colisão de filename (outra nota com mesmo nome) ──
     const newFilename = await resolveFilenameCollision(dirPath, baseFilename, nota.id)
@@ -442,22 +451,29 @@ export async function lerNotaVault(filePath, cadernoHint = '') {
   }
 }
 
-export async function deletarNotaVault(vaultPath, caderno, id) {
-  // Varre todas as notas do caderno (incluindo subpastas) para encontrar pelo id
+export async function deletarNotaVault(vaultPath, _caderno, id) {
+  // Scan em todo o vault (incluindo raiz e subpastas aninhadas), casa por id.
+  // O parâmetro caderno é ignorado (mantido por compat) — antes filtrávamos por
+  // caderno e isso falhava em notas em subpastas profundas após folder moves,
+  // quando o cache de caderno ficava stale.
+  let lastErr = null
   try {
     const allPaths = await _getAllMdPaths(vaultPath)
     for (const filePath of allPaths) {
-      if (_topDir(filePath, vaultPath) !== caderno.normalize('NFC')) continue
       try {
         const raw = await el().readFile(filePath)
         const { frontmatter } = parseMdFile(raw)
         const filename = filePath.split(/[/\\]/).pop()
-        if (frontmatter?.id === id || filenameToId(filename) === id) {
-          return el().deleteFile(filePath)
+        const fnId = filenameToId(filename)
+        if (frontmatter?.id === id || fnId === id || frontmatter?.id === String(id) || fnId === String(id)) {
+          await el().deleteFile(filePath)
+          return true
         }
-      } catch {}
+      } catch (err) { lastErr = err }
     }
-  } catch {}
+  } catch (err) { lastErr = err }
+  if (lastErr) console.warn('[deletarNotaVault] nota não encontrada ou erro:', id, lastErr?.message)
+  return false
 }
 
 /**
@@ -513,6 +529,9 @@ function _subpasta(filePath, vaultPath) {
  */
 function _topDir(filePath, vaultPath) {
   const parts = _relParts(filePath, vaultPath)
+  // Se parts tem só 1 elemento, é só o filename — arquivo direto na raiz do vault,
+  // sem diretório de topo. Retorna '' pra representar "nenhum caderno".
+  if (parts.length < 2) return ''
   return parts[0] || ''
 }
 
@@ -523,6 +542,14 @@ function _topDir(filePath, vaultPath) {
 async function _getAllMdPathsFallback(vaultPath) {
   const topDirs = (await el().readdir(vaultPath, { dirsOnly: true })) || []
   const paths = []
+
+  // Arquivos .md direto na raiz do vault (notas "soltas", sem caderno)
+  try {
+    const rootFiles = (await el().readdir(vaultPath)) || []
+    for (const f of rootFiles) {
+      if (f.endsWith('.md')) paths.push(await el().joinPath(vaultPath, f))
+    }
+  } catch { /* ignora se readdir da raiz falhar */ }
 
   for (const dir of topDirs) {
     if (RESERVED_DIRS.has(dir)) continue
@@ -570,7 +597,9 @@ async function _getAllMdPaths(vaultPath) {
 
   return allPaths.filter(p => {
     const topDir = _topDir(p, vaultPath)
-    return topDir && !RESERVED_DIRS.has(topDir)
+    // topDir === '' → arquivo direto na raiz do vault (permitido: notas soltas)
+    // topDir em RESERVED_DIRS → filtrado (_machine, meses)
+    return !RESERVED_DIRS.has(topDir)
   })
 }
 
@@ -613,7 +642,9 @@ export async function getTodasNotasVault(vaultPath) {
  */
 export async function getNotasParaGrafoVault(vaultPath) {
   const allPaths = await _getAllMdPaths(vaultPath)
-  const wikilinkRe = /\[\[([^\]]+)\]\]/g
+  // `[^\]\n]+` impede que o match atravesse linhas. Também filtramos
+  // matches dentro de inline code e code fences abaixo.
+  const wikilinkRe = /\[\[([^\]\n]+)\]\]/g
 
   const settled = await Promise.allSettled(allPaths.map(async (filePath) => {
     const caderno = _topDir(filePath, vaultPath)
@@ -621,12 +652,23 @@ export async function getNotasParaGrafoVault(vaultPath) {
     const { frontmatter, body, format } = parseMdFile(raw)
     const filename = filePath.split(/[/\\]/).pop().replace(/\.md$/i, '').normalize('NFC')
 
-    // Extrai wikilinks do body
+    // Detecta regiões a ignorar: inline code e code fences
+    const bodyStr = body || ''
+    const skipRanges = []
+    const fenceRe = /```[\s\S]*?```/g
+    let fm
+    while ((fm = fenceRe.exec(bodyStr)) !== null) skipRanges.push([fm.index, fm.index + fm[0].length])
+    const inlineRe = /`[^`\n]+`/g
+    let im
+    while ((im = inlineRe.exec(bodyStr)) !== null) skipRanges.push([im.index, im.index + im[0].length])
+    const isInSkip = (pos) => skipRanges.some(([s, e]) => pos >= s && pos < e)
+
+    // Extrai wikilinks do body — pulando regiões de código
     const wikilinks = []
     wikilinkRe.lastIndex = 0
-    const bodyStr = body || ''
     let m
     while ((m = wikilinkRe.exec(bodyStr)) !== null) {
+      if (isInSkip(m.index)) continue
       wikilinks.push(m[1].split('|')[0].trim().normalize('NFC').toLowerCase())
     }
 
@@ -716,7 +758,7 @@ export async function lerTemplateVault(vaultPath, filename) {
 
 // ── Cadernos (derived from folder names) ─────────────────────────────────────
 
-const CADERNOS_PADRAO = ['Pensamentos', 'Leituras', 'Projetos']
+const CADERNOS_PADRAO = ['Inbox', 'Diário', 'Arquivo']
 
 export async function getCadernosVault(vaultPath) {
   const entries = await el().readdir(vaultPath, { dirsOnly: true })
@@ -835,109 +877,613 @@ export async function getBacklinksVault(vaultPath, titulo) {
   return backlinks
 }
 
+// ── Folder moves & path helpers (Obsidian-like) ──────────────────────────────
+
+/**
+ * Quebra um path relativo de caderno em { caderno: topDir, subpasta: rest }.
+ * Ex: "Arquivo/Codex/Leituras" → { caderno: "Arquivo", subpasta: "Codex/Leituras" }
+ * Ex: "Codex" → { caderno: "Codex", subpasta: null }
+ *
+ * Usado por callers que leem configs de caderno (journalCaderno, defaultCaderno)
+ * para suportar configs que, após folder moves, guardam paths nested.
+ */
+export function splitCadernoPath(relPath) {
+  if (!relPath || typeof relPath !== 'string') return { caderno: '', subpasta: null }
+  const norm = relPath.replace(/^[/\\]+|[/\\]+$/g, '')
+  if (!norm) return { caderno: '', subpasta: null }
+  const parts = norm.split(/[/\\]/)
+  if (parts.length === 1) return { caderno: parts[0], subpasta: null }
+  return { caderno: parts[0], subpasta: parts.slice(1).join('/') }
+}
+
+/**
+ * Move (rename) uma pasta inteira no vault via fs.rename atômico.
+ * Paths são relativos ao vault (ex: "Codex", "Arquivo/Codex").
+ *
+ * Guards:
+ *  - Não mexe em RESERVED_DIRS (_machine, meses)
+ *  - Não mexe na pasta de templates configurada
+ *  - Aborta se o destino já existe (sem merge, sem auto-rename)
+ *  - Aborta se o destino está dentro da origem (cycle)
+ */
+export async function moverCadernoVault(vaultPath, fromRelPath, toRelPath) {
+  const from = (fromRelPath || '').trim().replace(/^[/\\]+|[/\\]+$/g, '')
+  const to   = (toRelPath   || '').trim().replace(/^[/\\]+|[/\\]+$/g, '')
+  if (!from || !to) throw new Error('Paths inválidos')
+  if (from === to) return { from, to, noop: true }
+
+  const fromTop = from.split(/[/\\]/)[0]
+  const toTop   = to.split(/[/\\]/)[0]
+  if (RESERVED_DIRS.has(fromTop)) throw new Error(`Pasta reservada não pode ser movida: ${fromTop}`)
+  if (RESERVED_DIRS.has(toTop))   throw new Error(`Destino é pasta reservada: ${toTop}`)
+
+  const tplDir = (configuredTemplatesDir || 'templates').toLowerCase()
+  if (fromTop.toLowerCase() === tplDir) {
+    throw new Error('Pasta de templates não pode ser movida enquanto estiver configurada como tal')
+  }
+
+  // Cycle guard: não pode mover pra dentro de si mesma
+  if (to === from || to.startsWith(from + '/') || to.startsWith(from + '\\')) {
+    throw new Error('Não é possível mover uma pasta pra dentro dela mesma')
+  }
+
+  const fromAbs = await el().joinPath(vaultPath, ...from.split(/[/\\]/))
+  const toAbs   = await el().joinPath(vaultPath, ...to.split(/[/\\]/))
+
+  if (!(await el().exists(fromAbs))) {
+    throw new Error(`Pasta origem não encontrada: ${from}`)
+  }
+  if (await el().exists(toAbs)) {
+    throw new Error(`Já existe uma pasta em ${to}`)
+  }
+
+  // fs:rename em diretório — main.cjs já garante mkdir -p do pai
+  await el().rename(fromAbs, toAbs)
+  return { from, to, noop: false }
+}
+
+/**
+ * Reescreve as configs de caderno (journalCaderno, defaultCaderno, templatesDir)
+ * quando uma pasta é movida. Preserva sub-caminhos:
+ *   journalCaderno="Codex"          + move Codex → Arquivo/Codex  → "Arquivo/Codex"
+ *   journalCaderno="Codex/Sub"      + move Codex → Arquivo/Codex  → "Arquivo/Codex/Sub"
+ *
+ * Retorna array de { key, from, to } pra alimentar toasts.
+ */
+const CADERNO_CONFIG_KEYS = ['journalCaderno', 'defaultCaderno', 'templatesDir']
+
+export async function remapCadernoConfigs(fromRelPath, toRelPath) {
+  const updates = []
+  const from = (fromRelPath || '').replace(/^[/\\]+|[/\\]+$/g, '')
+  const to   = (toRelPath   || '').replace(/^[/\\]+|[/\\]+$/g, '')
+  if (!from || !to || from === to) return updates
+
+  for (const key of CADERNO_CONFIG_KEYS) {
+    const current = await el().getConfig?.(key)
+    if (!current || typeof current !== 'string') continue
+    const norm = current.replace(/^[/\\]+|[/\\]+$/g, '')
+    let next = null
+    if (norm === from) {
+      next = to
+    } else if (norm.startsWith(from + '/') || norm.startsWith(from + '\\')) {
+      next = to + norm.slice(from.length)
+    }
+    if (next && next !== current) {
+      await el().setConfig?.(key, next)
+      updates.push({ key, from: current, to: next })
+    }
+  }
+  return updates
+}
+
+/**
+ * Deleta uma pasta do vault recursivamente (incluindo todo o conteúdo).
+ * Guards: RESERVED_DIRS e pasta de templates configurada.
+ * Path é relativo ao vault (ex: "Codex" ou "Codex/Leituras").
+ */
+export async function deletarCadernoVault(vaultPath, relPath) {
+  const rel = (relPath || '').trim().replace(/^[/\\]+|[/\\]+$/g, '')
+  if (!rel) throw new Error('Path vazio')
+
+  const topSeg = rel.split(/[/\\]/)[0]
+  if (RESERVED_DIRS.has(topSeg)) {
+    throw new Error(`Pasta reservada não pode ser deletada: ${topSeg}`)
+  }
+  const tplDir = (configuredTemplatesDir || 'templates').toLowerCase()
+  if (topSeg.toLowerCase() === tplDir) {
+    throw new Error('Pasta de templates não pode ser deletada enquanto estiver configurada como tal')
+  }
+
+  const absPath = await el().joinPath(vaultPath, ...rel.split(/[/\\]/))
+  if (!(await el().exists(absPath))) {
+    throw new Error(`Pasta não encontrada: ${rel}`)
+  }
+  await el().rmrf(absPath)
+  return true
+}
+
+/**
+ * Cria uma subpasta dentro do vault.
+ * parentRelPath='' → cria na raiz do vault (nova pasta top-level, igual criarCadernoVault)
+ * parentRelPath='Codex' → cria em Codex/<nome>
+ */
+export async function criarSubpastaVault(vaultPath, parentRelPath, nome) {
+  const nomeSane = sanitizeName(nome)
+  if (!nomeSane || nomeSane === 'sem-titulo') throw new Error('Nome inválido')
+
+  const parent = (parentRelPath || '').trim().replace(/^[/\\]+|[/\\]+$/g, '')
+  const parentTop = parent.split(/[/\\]/)[0]
+  if (parentTop && RESERVED_DIRS.has(parentTop)) {
+    throw new Error(`Pasta reservada: ${parentTop}`)
+  }
+
+  const partes = parent ? [...parent.split(/[/\\]/), nomeSane] : [nomeSane]
+  const absPath = await el().joinPath(vaultPath, ...partes)
+
+  if (await el().exists(absPath)) {
+    throw new Error(`Já existe uma pasta com esse nome: ${partes.join('/')}`)
+  }
+
+  await el().mkdir(absPath)
+  return partes.join('/')
+}
+
+/**
+ * Retorna o caminho absoluto de uma pasta do vault, pra passar pro Finder.
+ */
+export async function resolverPastaAbsVault(vaultPath, relPath) {
+  const rel = (relPath || '').trim().replace(/^[/\\]+|[/\\]+$/g, '')
+  if (!rel) return vaultPath
+  return el().joinPath(vaultPath, ...rel.split(/[/\\]/))
+}
+
+/**
+ * Propaga um rename de nota para todos os wikilinks `[[tituloAntigo]]` e
+ * `[[tituloAntigo|alias]]` no vault, preservando aliases.
+ *
+ * Fast path: `raw.includes('[[old')` antes do regex full — pula notas sem match.
+ *
+ * Retorna array de caminhos atualizados (pra alimentar toast).
+ */
+export async function propagarRenameVault(vaultPath, tituloAntigo, tituloNovo) {
+  if (!tituloAntigo || !tituloNovo) return []
+  const oldNorm = String(tituloAntigo).normalize('NFC')
+  const newNorm = String(tituloNovo).normalize('NFC')
+  if (oldNorm === newNorm) return []
+
+  // Escapa caracteres especiais de regex no título antigo
+  const escaped = oldNorm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // Casa [[Title]] e [[Title|alias]] — captura o alias se houver
+  const re = new RegExp(`\\[\\[${escaped}(\\|[^\\]]*)?\\]\\]`, 'g')
+
+  const allPaths = await _getAllMdPaths(vaultPath)
+  const updated = []
+  for (const filePath of allPaths) {
+    try {
+      const raw = await el().readFile(filePath)
+      if (!raw || !raw.includes(`[[${oldNorm}`)) continue // fast path
+      const next = raw.replace(re, (_m, alias) => `[[${newNorm}${alias || ''}]]`)
+      if (next !== raw) {
+        await el().writeFile(filePath, next)
+        updated.push(filePath)
+      }
+    } catch (err) {
+      console.warn('[propagarRenameVault] falha ao processar', filePath, err?.message)
+    }
+  }
+  return updated
+}
+
 // ── Vault initialization ──────────────────────────────────────────────────────
 
-const NOTA_BOAS_VINDAS_MD = `# Bem-vindo ao Paraverso 🌿
+// ── Onboarding: notas iniciais criadas num vault novo ───────────────────────
 
-Este é o seu caderno digital. Aqui você encontra um resumo rápido de tudo que pode fazer.
+const ONBOARDING_NOTAS = [
+  {
+    filename: '1. Bem-vindo ao Paraverso',
+    body: `# Bem-vindo ao Paraverso 🌿
+
+Este é o seu segundo cérebro. Um lugar pra pensar, registrar, conectar ideias.
+
+Se você nunca usou um app de PKM (*Personal Knowledge Management*) antes, não se preocupe. Os 3 princípios que importam são:
+
+1. **Capture first, organize later** — escreva primeiro, organize depois. Jogue tudo na \`Inbox\` sem culpa.
+2. **Link > folder** — conectar notas com \`[[wikilinks]]\` vale mais do que organizar em pastas.
+3. **Review semanal** — reserve 10 minutos por semana pra revisitar sua Inbox e decidir o que virou ideia permanente.
+
+É isso. Simples. Se duvidar, volte pra esses 3 princípios.
 
 ---
 
+Suas próximas leituras (todas aqui na Inbox):
+
+[[2. Como escrever]] — markdown básico e wikilinks
+[[3. Atalhos]] — os atalhos de teclado mais úteis
+[[4. Abas do app]] — o que cada aba faz
+[[5. Princípios PKM]] — aprofundando os 3 princípios acima
+
+Boa escrita. ✍️
+`,
+  },
+  {
+    filename: '2. Como escrever',
+    body: `# Como escrever
+
+O Paraverso usa **markdown** puro — a mesma sintaxe do Obsidian, GitHub, Notion.
+
 ## Formatação básica
 
-- **Negrito**: \`**texto**\`
-- *Itálico*: \`*texto*\`
-- ~~Tachado~~: \`~~texto~~\`
-- \`Código inline\`: \`\\\`código\\\`\`
+- **Negrito** com \`**texto**\`
+- *Itálico* com \`*texto*\`
+- ~~Tachado~~ com \`~~texto~~\`
+- \`Código inline\` com crases
 
 ## Títulos
 
-Use \`#\` para H1, \`##\` para H2, \`###\` para H3, e assim por diante.
+Use \`#\` pra H1, \`##\` pra H2, e assim por diante até \`######\`.
 
 ## Listas
 
-- Item comum
+- Item
 - Outro item
-  - Sub-item (Tab para indentar)
-
-1. Lista numerada
-2. Segundo item
+  - Sub-item (Tab pra indentar)
 
 ## Tarefas
 
 - [ ] Tarefa pendente
-- [x] Tarefa concluída
+- [x] Tarefa feita
 
-## Links entre notas — Wikilinks
+## Wikilinks — o coração do app
 
-A funcionalidade mais poderosa do Paraverso.
+Escreva \`[[\` e o autocomplete abre com suas notas. Confirme com Enter.
 
-- Escreva \`[[\` para abrir o autocomplete de notas existentes
-- Clique em um [[link]] para navegar direto para a nota
-- Se a nota não existir, ela será criada automaticamente
-- Você pode editar o texto de um link colocando o cursor dentro dele
+Se a nota não existe, o link fica pendente — quando você clicar nele, a nota é criada automaticamente no caderno ativo.
 
-## Citações
+Wikilinks suportam alias: \`[[Título real|texto exibido]]\`.
 
-> Esta é uma citação em bloco.
-> Ideal para destacar ideias importantes.
+## Tags
 
-## Código
+Escreva \`#nome-da-tag\` em qualquer lugar. Tags são buscáveis no \`⌘O\` e aparecem no grafo.
 
-\`\`\`javascript
-// Bloco de código
-function hello() {
-  return "Paraverso"
-}
+## Imagens e PDFs
+
+\`Ctrl+V\` ou \`⌘V\` com uma imagem/PDF no clipboard — o arquivo vai pra pasta \`attachments/\` automaticamente e aparece inline na nota.
+
+---
+
+Próxima: [[3. Atalhos]]
+
+Anterior: [[1. Bem-vindo ao Paraverso]]
+`,
+  },
+  {
+    filename: '3. Atalhos',
+    body: `# Atalhos
+
+## Navegação
+
+| Atalho | Ação |
+|---|---|
+| \`⌘O\` | Abrir qualquer nota do vault (*Quick Switcher*) |
+| \`⌘N\` | Nova nota (na pasta padrão) |
+| \`⌘T\` | Inserir template |
+| \`⌘F\` | Buscar dentro da nota atual |
+
+## Edição
+
+| Atalho | Ação |
+|---|---|
+| \`⌘B\` | Negrito |
+| \`⌘I\` | Itálico |
+| \`Tab\` | Indentar lista |
+| \`⇧Tab\` | Desindentar |
+
+## Na sidebar
+
+- **Clique direito** em qualquer pasta → menu com Nova nota, Nova pasta, Renomear, Mover, Revelar no Finder, Apagar
+- **Arrastar** uma pasta pra dentro de outra → ela vira subpasta. Todas as referências (journal, configs, grupos de cor do grafo) atualizam automaticamente
+- **Arrastar** uma nota entre cadernos → move o arquivo
+
+## Renomear notas
+
+Mudar o título de uma nota renomeia o arquivo E atualiza todos os \`[[wikilinks]]\` que apontam pra ela no vault inteiro. Nada fica quebrado.
+
+---
+
+Próxima: [[4. Abas do app]]
+
+Anterior: [[2. Como escrever]]
+`,
+  },
+  {
+    filename: '4. Abas do app',
+    body: `# Abas do app
+
+## 📅 Mês
+
+Seu diário visual. Uma grade do mês com cada dia clicável. Também tem metas (por categoria) e registro de hábitos com cores. Use quando quiser registrar como foi o seu dia ou acompanhar rotina.
+
+O botão de **nota diária** cria automaticamente uma nota no caderno \`Diário\` com o template \`Nota diária\`.
+
+## 📝 Notas
+
+Onde você tá agora. Sidebar com seus cadernos + editor + painel de backlinks (quem menciona a nota atual).
+
+## 🕸️ Grafo
+
+Visualização de todo o vault como uma rede. Cada nó é uma nota, cada linha é um \`[[wikilink]]\`. Nós são coloridos por caderno.
+
+Dê zoom in pra ver os nomes das notas aparecerem. Clique num nó pra abrir a nota no editor.
+
+No painel de configurações (⚙ no canto), você pode criar **grupos de cor** — regras tipo "todas as notas do caderno Projetos ficam laranja".
+
+## ⚙️ Config
+
+Onde você configura a pasta padrão de novas notas, a pasta das notas diárias, tema, textura do editor, e importa um vault do Obsidian.
+
+---
+
+Próxima: [[5. Princípios PKM]]
+
+Anterior: [[3. Atalhos]]
+`,
+  },
+  {
+    filename: '5. Princípios PKM',
+    body: `# Princípios de PKM
+
+Esses 3 princípios vieram do *Building a Second Brain* (Tiago Forte) e do método *Zettelkasten* (Niklas Luhmann). São o mínimo que você precisa saber.
+
+## 1. Capture first, organize later
+
+A maior armadilha de quem começa num app assim é **travar decidindo onde guardar**. Esqueça.
+
+Toda ideia, frase solta, trecho copiado de um livro, recado que você quer lembrar — vai pra \`Inbox\`. Sem hierarquia, sem categoria, sem tag. Só escreve.
+
+Organizar é uma atividade **separada**, que você faz depois.
+
+## 2. Link é mais importante que pasta
+
+Pastas são úteis pra separar grandes contextos (Trabalho, Pessoal, Projetos). Mas a **conexão real** entre ideias acontece via \`[[wikilinks]]\`.
+
+Uma nota sobre *produtividade* pode linkar uma sobre *sono*, que linka uma sobre *alimentação*, que linka uma sobre *disciplina*. Essa teia é o seu segundo cérebro — não as pastas.
+
+Regra prática: se você tem dúvida entre criar uma pasta ou usar um wikilink, use wikilink.
+
+## 3. Review semanal
+
+Reserve **10 minutos por semana** pra:
+
+1. Abrir a \`Inbox\`
+2. Pra cada nota solta, decidir: isso é lixo, isso virou ideia permanente, isso vira projeto, ou isso fica na Inbox mais uma semana
+3. Notas permanentes vão pra um caderno próprio (ou continuam na Inbox com wikilinks)
+4. Lixo vai pra \`Arquivo\` (ou é apagado)
+
+Sem review, a Inbox vira lixão. Com review, vira mina de ouro.
+
+## MOC — Map of Content
+
+Conforme você acumula notas, algumas viram "índices" — listas de \`[[]]\` sobre um tema. Isso é um **MOC** (Map of Content).
+
+Ex: uma nota chamada \`MOC — Produtividade\` que só tem wikilinks pras notas mais importantes sobre o tema. Você escreve essa nota aos poucos, ela cresce com você.
+
+MOCs são o jeito Obsidian de criar hierarquia sem pastas.
+
+---
+
+Pronto. Você sabe tudo que precisa saber pra começar. O resto você aprende escrevendo.
+
+Anterior: [[4. Abas do app]]
+`,
+  },
+]
+
+// ── Templates iniciais ──────────────────────────────────────────────────────
+
+const TEMPLATES_INICIAIS = [
+  {
+    filename: 'Nota diária.md',
+    body: `# {{date}}
+
+## Como me sinto
+
+## O que fiz hoje
+
+-
+
+## O que aprendi
+
+## Amanhã
+
+- [ ]
+`,
+  },
+  {
+    filename: 'Nota de leitura.md',
+    body: `# {{Title}}
+
+**Autor:**
+**Fonte:** (livro, artigo, vídeo, podcast)
+**Data:** {{date}}
+
+## Resumo em 1 frase
+
+## Highlights
+
+>
+
+## Minhas ideias
+
+## Conecta com
+
+- [[]]
+`,
+  },
+]
+
+// ── _machine: instrução do Claude terminal ──────────────────────────────────
+
+const MACHINE_CLAUDE_GUIDE = `# Como usar o Claude no terminal
+
+O Paraverso funciona melhor com o **Claude Code** instalado. É uma IA que roda no seu terminal, dentro da pasta do vault — ela lê e escreve notas direto aqui.
+
+## Instalar
+
+Site oficial: https://claude.com/claude-code
+
+Siga as instruções da página pra instalar na sua máquina.
+
+## Usar
+
+1. Abra o terminal
+2. Navegue até a pasta do seu vault:
+   \`\`\`
+   cd "caminho/do/vault"
+   \`\`\`
+3. Rode:
+   \`\`\`
+   claude
+   \`\`\`
+
+Pronto. Agora você pode pedir coisas em linguagem natural:
+
+- "Resume minhas últimas 5 notas diárias"
+- "Cria uma nota sobre X linkando com Y e Z"
+- "Organiza minha Inbox agrupando por tema"
+- "Lê minha nota [[Produtividade]] e sugere 3 conexões"
+
+O Claude vê a pasta \`_machine/\` (onde você tá agora) mas **também** vê todas as suas notas humanas. Ele escreve em \`_machine/\` por padrão pra não bagunçar seu vault — você pode mover depois se quiser.
+
+---
+
+## A skill mais importante: **contexto**
+
+De todas as skills que você pode criar ou usar, a mais importante é a **skill de contexto**: ela faz o Claude **ler o seu vault inteiro, aprender sobre você, e escrever o que aprendeu** em \`_machine/contexts/contexto.md\`.
+
+É isso que transforma o Claude de um assistente genérico em um parceiro que entende **você**: como você pensa, como você escreve, o que te interessa, quais projetos você tem em andamento.
+
+Quanto mais você usa essa skill, mais rica fica a nota de contexto, e melhor ficam TODAS as outras respostas do Claude no vault — porque toda pergunta futura passa a ser respondida com esse contexto carregado.
+
+**Como usar:**
+
+1. Deixe o vault populado com algumas notas suas (mesmo que poucas)
+2. No Claude terminal, digite \`/contexto\` (se a skill estiver instalada) ou peça em linguagem natural: *"Lê o meu vault inteiro e atualiza \`_machine/contexts/contexto.md\` com o que você aprendeu sobre mim"*
+3. Claude vai ler tudo, identificar padrões (temas recorrentes, forma de escrever, interesses, projetos) e atualizar o arquivo de contexto
+4. Das próximas vezes que você abrir o Claude no vault, ele começa já sabendo quem você é
+
+Faça isso pelo menos uma vez por semana — o contexto evolui junto com você.
+
+---
+
+## Outras skills
+
+O Claude tem o conceito de **skills**: instruções em markdown que viram atalhos reutilizáveis, ativados com \`/nome-da-skill\`. Elas ficam em \`~/.claude/skills/\`.
+
+Exemplo em texto (ilustrativo — não está criada):
+
+\`\`\`
+~/.claude/skills/review-semanal/SKILL.md
+
+---
+name: review-semanal
+description: Revisa a Inbox do vault e sugere organização por tema.
+---
+
+Leia todas as notas em Inbox/. Para cada uma:
+1. Classifique como: lixo, ideia permanente, tarefa, ou continua inbox.
+2. Sugira 1 wikilink pra uma nota existente do vault.
+3. Se for ideia permanente, sugira o caderno destino.
+
+Apresente como tabela e espere eu aprovar antes de mover algo.
 \`\`\`
 
----
+Com isso, basta digitar \`/review-semanal\` no Claude e ele roda essa rotina toda.
 
-## Atalhos de teclado
-
-| Ação | Atalho |
-|---|---|
-| Nova nota | \`⌘N\` |
-| Abrir nota rápida | \`⌘O\` |
-| Buscar no editor | \`⌘F\` |
-| Inserir template | \`⌘T\` |
-| Negrito | \`⌘B\` |
-| Itálico | \`⌘I\` |
+Você descobre as skills disponíveis digitando \`/\` no Claude. Pra criar as suas, é só um arquivo markdown na pasta certa — o Claude detecta automaticamente.
 
 ---
 
-Explore os cadernos na barra lateral. Cada pasta é um caderno.
-Use a aba **Mês** para o seu diário + hábitos. Boa escrita! ✍️
+Essa é a introdução mínima. O resto você descobre usando.
 `
 
+// ── initVault ───────────────────────────────────────────────────────────────
+
+/**
+ * Helper: escreve uma nota no vault com frontmatter YAML completo.
+ * Usado só pelo onboarding inicial.
+ */
+async function _writeOnboardingNote(vaultPath, caderno, filename, body) {
+  const id = crypto.randomUUID()
+  const now = Date.now()
+  const yaml = [
+    '---',
+    `id: ${id}`,
+    `titulo: ${JSON.stringify(filename)}`,
+    `caderno: ${JSON.stringify(caderno)}`,
+    `tags: []`,
+    `criadaEm: ${now}`,
+    `editadaEm: ${now}`,
+    '---',
+    '',
+  ].join('\n')
+  const filePath = await el().joinPath(vaultPath, caderno, filename + '.md')
+  await el().writeFile(filePath, yaml + body)
+}
+
 export async function initVault(vaultPath) {
+  // Pastas base
   await el().mkdir(await el().joinPath(vaultPath, 'meses'))
   await el().mkdir(await el().joinPath(vaultPath, configuredTemplatesDir))
-  const cadernos = await getCadernosVault(vaultPath) // creates default cadernos if empty
 
-  // Cria nota de boas-vindas se o vault é novo (sem nenhum .md ainda)
+  // Cria cadernos default (Inbox, Diário, Arquivo) se não existir nenhum
+  const cadernos = await getCadernosVault(vaultPath)
+
   try {
     const allPaths = await _getAllMdPaths(vaultPath).catch(() => [])
+
+    // Só popula onboarding se o vault tá completamente vazio
     if (allPaths.length === 0 && cadernos.length > 0) {
-      const primeiroCaderno = cadernos[0].nome
-      const id = crypto.randomUUID()
-      const now = Date.now()
-      const yaml = [
-        '---',
-        `id: ${id}`,
-        `titulo: "Bem-vindo ao Paraverso"`,
-        `caderno: ${JSON.stringify(primeiroCaderno)}`,
-        `tags: []`,
-        `criadaEm: ${now}`,
-        `editadaEm: ${now}`,
-        '---',
-        '',
-      ].join('\n')
-      const filename = 'Bem-vindo ao Paraverso'
-      const filePath = await el().joinPath(vaultPath, primeiroCaderno, filename + '.md')
-      await el().writeFile(filePath, yaml + NOTA_BOAS_VINDAS_MD)
+      // 1. Notas de onboarding em Inbox
+      const inboxExists = cadernos.find(c => c.nome === 'Inbox')
+      const cadernoAlvo = inboxExists ? 'Inbox' : cadernos[0].nome
+      for (const nota of ONBOARDING_NOTAS) {
+        await _writeOnboardingNote(vaultPath, cadernoAlvo, nota.filename, nota.body)
+      }
+
+      // 2. Templates iniciais
+      for (const tpl of TEMPLATES_INICIAIS) {
+        const tplPath = await el().joinPath(vaultPath, configuredTemplatesDir, tpl.filename)
+        const exists = await el().exists(tplPath)
+        if (!exists) await el().writeFile(tplPath, tpl.body)
+      }
+
+      // 3. _machine: só a instrução do Claude.
+      // A estrutura base (contexts/contexto.md + README) é criada pelo
+      // machine:init em App.jsx. Aqui só adicionamos o guia de uso.
+      try {
+        const machineDir = await el().joinPath(vaultPath, '_machine')
+        await el().mkdir(machineDir)
+
+        const claudeGuidePath = await el().joinPath(machineDir, 'Como usar Claude.md')
+        if (!(await el().exists(claudeGuidePath))) {
+          await el().writeFile(claudeGuidePath, MACHINE_CLAUDE_GUIDE)
+        }
+      } catch (err) {
+        console.warn('[initVault] Falha ao popular _machine:', err?.message)
+      }
+
+      // 4. Configs defaults — só seta se o usuário ainda não tem
+      try {
+        const currentDefault = await el().getConfig?.('defaultCaderno')
+        if (!currentDefault) await el().setConfig?.('defaultCaderno', 'Inbox')
+
+        const currentJournal = await el().getConfig?.('journalCaderno')
+        if (!currentJournal) await el().setConfig?.('journalCaderno', 'Diário')
+      } catch (err) {
+        console.warn('[initVault] Falha ao setar configs default:', err?.message)
+      }
     }
   } catch (err) {
-    console.warn('[initVault] Falha ao criar nota de boas-vindas:', err?.message)
+    console.warn('[initVault] Falha no onboarding:', err?.message)
   }
 }

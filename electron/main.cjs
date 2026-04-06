@@ -3,7 +3,6 @@ const { pathToFileURL } = require('url')
 const path = require('path')
 const fs = require('fs')
 const fsp = fs.promises
-const os = require('os')
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -237,6 +236,29 @@ function registerIpcHandlers() {
     }
   })
 
+  // Revela item (arquivo ou pasta) no Finder/Explorer, destacado.
+  ipcMain.handle('shell:showItemInFinder', async (_e, targetPath) => {
+    try {
+      validatePath(targetPath)
+      shell.showItemInFolder(targetPath)
+      return true
+    } catch (err) {
+      throw new Error(`shell:showItemInFinder falhou: ${err.message}`)
+    }
+  })
+
+  // Remove uma pasta recursivamente (com todos os arquivos e subpastas dentro).
+  // Guard: validatePath evita paths fora do vault.
+  ipcMain.handle('fs:rmrf', async (_e, dirPath) => {
+    try {
+      validatePath(dirPath)
+      await fsp.rm(dirPath, { recursive: true, force: true })
+      return true
+    } catch (err) {
+      throw new Error(`fs:rmrf falhou: ${err.message}`)
+    }
+  })
+
   // ── Dialog ───────────────────────────────────────────────────────────────────
 
   ipcMain.handle('dialog:openFolder', async () => {
@@ -310,203 +332,63 @@ function registerIpcHandlers() {
       const machinePath = path.join(vaultPath, MACHINE_DIR)
       const existed = fs.existsSync(machinePath)
 
-      if (!existed) {
-        // Create directory structure
-        await fsp.mkdir(path.join(machinePath, 'contexts'), { recursive: true })
-        await fsp.mkdir(path.join(machinePath, 'templates'), { recursive: true })
+      // Estrutura mínima: só contexts/ + uma única nota contexto.md + README.
+      // Nada de templates/pessoa/interesses/estilo/pesquise/brainstorm/escrita —
+      // isso poluía o grafo do hemisfério máquina e duplicava conteúdo.
+      // A IA (Claude no terminal) escreve o contexto dinamicamente em
+      // contexts/contexto.md conforme aprende sobre o usuário.
+      await fsp.mkdir(path.join(machinePath, 'contexts'), { recursive: true })
 
-        // Create initial files
+      const contextoPath = path.join(machinePath, 'contexts', 'contexto.md')
+      if (!fs.existsSync(contextoPath)) {
         const now = new Date().toISOString()
+        const contextoMd = [
+          '---',
+          'type: machine-context',
+          'version: 1',
+          `updated: ${now}`,
+          '---',
+          '',
+          '# Contexto',
+          '',
+          'Este arquivo é gerenciado pela IA (Claude). Ela vai preencher e atualizar',
+          'esta nota conforme conhece você melhor através das suas notas do vault.',
+          '',
+          'Você **não precisa** escrever nada aqui manualmente — basta usar o Claude',
+          'no terminal e ele vai construindo o contexto ao longo do tempo.',
+          '',
+          '## Sobre a pessoa',
+          '_(A IA preencherá com o tempo)_',
+          '',
+          '## Como pensa / escreve',
+          '_(A IA preencherá com o tempo)_',
+          '',
+          '## Interesses e referências',
+          '_(A IA preencherá com o tempo)_',
+          '',
+          '## Projetos e objetivos atuais',
+          '_(A IA preencherá com o tempo)_',
+          '',
+        ].join('\n')
+        await fsp.writeFile(contextoPath, contextoMd, 'utf-8')
+      }
 
-        const files = {
-          'contexts/pessoa.md': [
-            '---',
-            'type: machine-context',
-            'subtype: pessoa',
-            'version: 1',
-            `updated: ${now}`,
-            '---',
-            '',
-            '# Contexto — Pessoa',
-            '',
-            '## Estilo de comunicação',
-            '[A IA preencherá com o tempo]',
-            '',
-            '## Interesses gerais',
-            '[A IA preencherá com o tempo]',
-            '',
-            '## Forma de pensar',
-            '[A IA preencherá com o tempo]',
-            '',
-            '## Notas da IA',
-            '[A IA preencherá com o tempo]',
-            '',
-          ].join('\n'),
-
-          'contexts/interesses.md': [
-            '---',
-            'type: machine-context',
-            'subtype: interesses',
-            'version: 1',
-            `updated: ${now}`,
-            '---',
-            '',
-            '# Contexto — Interesses e Referências',
-            '',
-            '## Livros lidos / referências',
-            '[A IA preencherá com o tempo]',
-            '',
-            '## Autores e pensadores',
-            '[A IA preencherá com o tempo]',
-            '',
-            '## Áreas de interesse',
-            '[A IA preencherá com o tempo]',
-            '',
-          ].join('\n'),
-
-          'templates/pesquise.md': [
-            '---',
-            'type: machine-template',
-            'command: pesquise',
-            '---',
-            '',
-            '# Template — Pesquisa Web',
-            '',
-            'Você é um assistente de pesquisa. Ao receber uma solicitação:',
-            '',
-            '1. Pesquise o tema solicitado',
-            '2. Leia o contexto em pessoa.md e interesses.md',
-            '3. Escreva um resumo que conecte o tema com os interesses da pessoa',
-            '4. Use a forma de comunicação descrita no contexto',
-            '5. Sugira conexões com referências que a pessoa já conhece',
-            '',
-            'Formato de saída: título, resumo (3-5 parágrafos), conexões com interesses, fontes.',
-            '',
-          ].join('\n'),
-
-          'templates/brainstorm.md': [
-            '---',
-            'type: machine-template',
-            'command: brainstorm',
-            '---',
-            '',
-            '# Template — Brainstorm',
-            '',
-            'Você é um parceiro de brainstorm criativo. Ao receber um tema:',
-            '',
-            '1. Leia o contexto em pessoa.md e interesses.md',
-            '2. Gere ideias que conectem o tema com os interesses da pessoa',
-            '3. Use referências que a pessoa já conhece como ponto de partida',
-            '4. Proponha ângulos não-óbvios e conexões interdisciplinares',
-            '5. Organize as ideias em clusters temáticos',
-            '',
-            'Formato de saída: tema central, ideias agrupadas, conexões surpreendentes, próximos passos.',
-            '',
-          ].join('\n'),
-
-          'templates/escrita.md': [
-            '---',
-            'type: machine-template',
-            'command: escrita',
-            '---',
-            '',
-            '# Template — Assistente de Escrita',
-            '',
-            'Você é um assistente de escrita. Ao receber uma solicitação:',
-            '',
-            '1. Leia o contexto em pessoa.md e interesses.md',
-            '2. Adapte o tom ao estilo de comunicação da pessoa',
-            '3. Use referências e vocabulário familiares ao autor',
-            '4. Mantenha a voz autêntica — ajude a expressar, não substitua',
-            '5. Sugira melhorias estruturais e de clareza',
-            '',
-            'Formato de saída: texto revisado, notas sobre alterações, sugestões opcionais.',
-            '',
-          ].join('\n'),
-
-          'contexts/estilo.md': [
-            '---',
-            'type: machine-context',
-            'subtype: estilo',
-            'version: 1',
-            `updated: ${now}`,
-            '---',
-            '',
-            '# Contexto — Estilo de Escrita',
-            '',
-            '## Tom geral',
-            '[A IA preencherá com o tempo]',
-            '',
-            '## Estrutura preferida',
-            '[A IA preencherá com o tempo]',
-            '',
-            '## Vocabulário e linguagem',
-            '[A IA preencherá com o tempo]',
-            '',
-            '## Como conecta ideias',
-            '[A IA preencherá com o tempo]',
-            '',
-            '## Exemplos de trechos característicos',
-            '[A IA preencherá com o tempo]',
-            '',
-          ].join('\n'),
-
-          'README.md': [
-            '# Hemisfério Máquina',
-            '',
-            'Esta pasta é gerenciada pela IA do Paraverso.',
-            'Não edite manualmente a menos que saiba o que está fazendo.',
-            'Os arquivos aqui são o "cérebro" da IA — contexto sobre você, templates de resposta.',
-            '',
-          ].join('\n'),
-        }
-
-        for (const [relPath, content] of Object.entries(files)) {
-          const fullPath = path.join(machinePath, relPath)
-          await fsp.writeFile(fullPath, content, 'utf-8')
-        }
-      } else {
-        // _machine/ already exists — ensure new files (e.g. estilo.md) are created
-        const newFiles = {
-          'contexts/estilo.md': true,
-        }
-        for (const relPath of Object.keys(newFiles)) {
-          const fullPath = path.join(machinePath, relPath)
-          if (!fs.existsSync(fullPath)) {
-            console.log('[MACHINE INIT] creating missing file:', fullPath)
-            await fsp.mkdir(path.dirname(fullPath), { recursive: true })
-            // Use the content from the files map above (rebuild it)
-            const now = new Date().toISOString()
-            if (relPath === 'contexts/estilo.md') {
-              await fsp.writeFile(fullPath, [
-                '---',
-                'type: machine-context',
-                'subtype: estilo',
-                'version: 1',
-                `updated: ${now}`,
-                '---',
-                '',
-                '# Contexto — Estilo de Escrita',
-                '',
-                '## Tom geral',
-                '[A IA preencherá com o tempo]',
-                '',
-                '## Estrutura preferida',
-                '[A IA preencherá com o tempo]',
-                '',
-                '## Vocabulário e linguagem',
-                '[A IA preencherá com o tempo]',
-                '',
-                '## Como conecta ideias',
-                '[A IA preencherá com o tempo]',
-                '',
-                '## Exemplos de trechos característicos',
-                '[A IA preencherá com o tempo]',
-                '',
-              ].join('\n'), 'utf-8')
-            }
-          }
-        }
+      const readmePath = path.join(machinePath, 'README.md')
+      if (!fs.existsSync(readmePath)) {
+        const readmeMd = [
+          '# Hemisfério Máquina',
+          '',
+          'Esta pasta é gerenciada pela IA do Paraverso (Claude no terminal).',
+          'Não edite manualmente a menos que saiba o que está fazendo.',
+          '',
+          'O arquivo mais importante aqui é **contexts/contexto.md** — é onde a IA',
+          'armazena o que sabe sobre você. Quanto mais você usa o Claude dentro do',
+          'vault, mais rico fica esse contexto, e melhor ficam as respostas.',
+          '',
+          'Veja **Como usar Claude.md** (na raiz de _machine/) pra começar.',
+          '',
+        ].join('\n')
+        await fsp.writeFile(readmePath, readmeMd, 'utf-8')
       }
 
       return { created: !existed, path: machinePath }
@@ -570,62 +452,26 @@ function registerIpcHandlers() {
   })
 
 
-  // ── Terminal embutido (shell + claude) ──────────────────────────────────────
-  // Architecture: spawn a real interactive shell (zsh/bash), then write the
-  // claude command into it. The shell stays alive because it's a real
-  // interactive process — no SIGHUP issues, no terminal capability queries.
-  // This is the same pattern used by obsidian-terminal.
+  // ── Terminal embutido (shell puro) ──────────────────────────────────────────
+  // Terminal simples: spawna shell interativo, sem nenhuma automacao.
+  // Igual a usar o terminal por fora — o usuario digita o que quiser.
+  // node-pty carregado lazy para nao crashar o app se o modulo nativo falhar.
 
-  const pty = require('node-pty-prebuilt-multiarch')
-
+  let pty = null
   let ptyProcess = null
 
   ipcMain.handle('terminal:start', async (event, vaultPath) => {
     try {
+      if (!pty) {
+        pty = require('node-pty-prebuilt-multiarch')
+      }
+
       if (ptyProcess) {
         try { ptyProcess.kill() } catch {}
         ptyProcess = null
         await new Promise(r => setTimeout(r, 200))
       }
 
-      // Generate MCP config pointing to vault
-      const mcpConfig = {
-        mcpServers: {
-          filesystem: {
-            command: 'npx',
-            args: ['-y', '@modelcontextprotocol/server-filesystem', vaultPath],
-          },
-        },
-      }
-      const mcpConfigPath = path.join(os.tmpdir(), 'paraverso-mcp-config.json')
-      fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2))
-
-      // Create/update CLAUDE.md in vault root — Claude Code reads it automatically
-      const claudeMdPath = path.join(vaultPath, 'CLAUDE.md')
-      console.log('[TERMINAL] creating CLAUDE.md at:', claudeMdPath)
-      fs.writeFileSync(claudeMdPath, [
-        '# Instruções para o Claude Code — Paraverso',
-        '',
-        '## Contexto obrigatório',
-        'Antes de responder qualquer coisa, leia estes arquivos:',
-        '- _machine/contexts/pessoa.md — quem é esta pessoa, como ela pensa e se comunica',
-        '- _machine/contexts/interesses.md — livros, autores, temas e referências desta pessoa',
-        '- _machine/contexts/estilo.md — como esta pessoa escreve e estrutura seus pensamentos',
-        '',
-        '## Regras de escrita',
-        '- Você pode criar e modificar arquivos APENAS dentro de `_machine/`',
-        '- NUNCA modifique arquivos fora de `_machine/` — o restante do vault é sagrado',
-        '- Quando criar notas de pesquisa ou contexto, salve em `_machine/contexts/`',
-        '',
-        '## Comportamento esperado',
-        '- Use o contexto da pessoa para personalizar todas as respostas',
-        '- Conecte novos temas com referências que a pessoa já conhece',
-        '- Escreva no estilo descrito em estilo.md quando gerar conteúdo',
-        '',
-      ].join('\n'), 'utf-8')
-
-      // Spawn a real interactive shell — same pattern as obsidian-terminal.
-      // The shell stays alive; we write the claude command into it.
       const shell = process.env.SHELL || '/bin/zsh'
 
       ptyProcess = pty.spawn(shell, [], {
@@ -649,21 +495,13 @@ function registerIpcHandlers() {
       })
 
       ptyProcess.onExit(({ exitCode }) => {
-        console.log('[PTY EXIT] code:', exitCode)
         if (!webContents.isDestroyed()) {
           webContents.send('terminal:exit', exitCode)
         }
         ptyProcess = null
       })
 
-      // Wait for shell to initialize, then send claude command
-      setTimeout(() => {
-        if (ptyProcess) {
-          ptyProcess.write(`claude --mcp-config "${mcpConfigPath}" --dangerously-skip-permissions\r`)
-        }
-      }, 1000)
-
-      return { success: true, mcpConfigPath }
+      return { success: true }
     } catch (err) {
       throw new Error(`terminal:start falhou: ${err.message}`)
     }
@@ -673,8 +511,11 @@ function registerIpcHandlers() {
     if (ptyProcess) ptyProcess.write(data)
   })
 
+  let currentCols = 120, currentRows = 30
   ipcMain.handle('terminal:resize', (_e, cols, rows) => {
-    if (ptyProcess) {
+    if (ptyProcess && (cols !== currentCols || rows !== currentRows)) {
+      currentCols = cols
+      currentRows = rows
       try { ptyProcess.resize(cols, rows) } catch {}
     }
   })
@@ -816,72 +657,6 @@ function registerIpcHandlers() {
       return results
     } catch (err) {
       throw new Error(`vault:scanHuman falhou: ${err.message}`)
-    }
-  })
-
-  // Generic vault scan — runs Claude --print to update a single context file
-  const { spawn } = require('child_process')
-
-  ipcMain.handle('vault:runScan', async (event, vaultPath, notes, targetFile, templateContent) => {
-    try {
-      validatePath(vaultPath)
-
-      const samples = notes
-        .filter(n => n.preview.length > 80)
-        .sort((a, b) => b.preview.length - a.preview.length)
-        .slice(0, 30)
-        .map(n => `### ${n.name}\n${n.preview.slice(0, 400)}`)
-        .join('\n\n---\n\n')
-
-      const prompt = [
-        templateContent,
-        '',
-        'ARQUIVO A ATUALIZAR:',
-        `${vaultPath}/_machine/contexts/${targetFile}`,
-        '',
-        `NOTAS DO VAULT (${notes.length} total, mostrando 30 mais longas):`,
-        '',
-        samples,
-        '',
-        `Analise as notas acima e atualize o arquivo ${targetFile} com o que descobriu.`,
-      ].join('\n')
-
-      const webContents = event.sender
-
-      return new Promise((resolve) => {
-        const child = spawn('/usr/local/bin/claude', [
-          '-p', prompt,
-          '--dangerously-skip-permissions',
-        ], {
-          cwd: vaultPath,
-          env: {
-            ...process.env,
-            PATH: `/usr/local/bin:/opt/homebrew/bin:${process.env.PATH || ''}`,
-          },
-        })
-
-        child.stdout.on('data', (data) => {
-          if (!webContents.isDestroyed()) {
-            webContents.send('terminal:data', data.toString())
-          }
-        })
-        child.stderr.on('data', (data) => {
-          if (!webContents.isDestroyed()) {
-            webContents.send('terminal:data', data.toString())
-          }
-        })
-        child.on('close', (code) => {
-          if (!webContents.isDestroyed()) {
-            webContents.send('terminal:data', `\r\n\x1b[35m✓ ${targetFile} atualizado.\x1b[0m\r\n`)
-          }
-          resolve({ success: code === 0 })
-        })
-        child.on('error', (err) => {
-          resolve({ success: false, output: err.message })
-        })
-      })
-    } catch (err) {
-      throw new Error(`vault:runScan falhou: ${err.message}`)
     }
   })
 

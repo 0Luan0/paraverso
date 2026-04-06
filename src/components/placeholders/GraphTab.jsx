@@ -8,7 +8,7 @@ import { useVault } from '../../contexts/VaultContext'
 import { mergeGraphNodes, machineNodeColor } from '../../lib/graphHemisphere'
 import { corPorCaderno } from '../../lib/graphColors'
 
-const COR_PADRAO = 'rgba(200,190,175,0.85)'
+const COR_PADRAO = 'rgb(180,180,180)'
 
 
 // ── Config padrão ──
@@ -21,7 +21,7 @@ const DEFAULT_CONFIG = {
   linkDistance: 80,
   gravity: 0.08,
   showLabels: true,
-  colorByCaderno: true,
+  colorByCaderno: false,
   showIsolados: false,
 }
 
@@ -253,6 +253,24 @@ function ConfigSection({ title, open, onToggle, children }) {
 
 const LABEL_THRESHOLD = 150
 
+/**
+ * Remapeia a query de um grupo de cor quando uma pasta é movida/renomeada no vault.
+ * Preserva o prefix (path: ou sem prefix) e aplica o rewrite em match exato ou sub-path.
+ * section: não é afetado (busca por título, independente de pasta).
+ */
+function remapGrupo(grupo, from, to) {
+  if (!grupo?.query || !from || !to) return grupo
+  let q = grupo.query
+  let prefix = ''
+  if (q.startsWith('path:')) { prefix = 'path:'; q = q.slice(5) }
+  else if (q.startsWith('section:')) return grupo // busca por título, não por pasta
+
+  // Match exato ou prefix de sub-path
+  if (q === from) return { ...grupo, query: prefix + to }
+  if (q.startsWith(from + '/')) return { ...grupo, query: prefix + to + q.slice(from.length) }
+  return grupo
+}
+
 export function GraphTab({ dark }) {
   const { vaultPath } = useVault()
   const [loading, setLoading] = useState(true)
@@ -276,6 +294,8 @@ export function GraphTab({ dark }) {
   // Refs to d3 selections for visual updates without recreation
   const linkSelRef = useRef(null)
   const nodeSelRef = useRef(null)
+  const labelGroupsRef = useRef(null) // groups dos labels (pra tick atualizar transform)
+  const labelSelRef = useRef(null)    // text.label (pra effect B atualizar font-size/dy)
   const updateLabelVisibilityRef = useRef(null)
   // Grupos de cor customizáveis (query-based)
   const [grupos, setGrupos] = useState(() => {
@@ -288,6 +308,18 @@ export function GraphTab({ dark }) {
   useEffect(() => {
     try { localStorage.setItem('paraverso-graph-grupos', JSON.stringify(grupos)) } catch {}
   }, [grupos])
+
+  // Sincroniza grupos de cor com renames/moves de pasta no vault.
+  // NotasTab dispara 'paraverso:pasta-movida' após rename (context menu) ou drag & drop.
+  useEffect(() => {
+    function handlePastaMovida(e) {
+      const { from, to } = e.detail || {}
+      if (!from || !to || from === to) return
+      setGrupos(prev => prev.map(g => remapGrupo(g, from, to)))
+    }
+    window.addEventListener('paraverso:pasta-movida', handlePastaMovida)
+    return () => window.removeEventListener('paraverso:pasta-movida', handlePastaMovida)
+  }, [])
 
   // Lista de cadernos/títulos para autocomplete (estado React para re-render)
   const cadernosRef = useRef([])
@@ -424,14 +456,22 @@ export function GraphTab({ dark }) {
         const gEl = select(gRef.current)
         const updateLabelVisibility = (transform) => {
           const k = transform?.k ?? 1
-          gEl.selectAll('text.label, text.label-halo')
-            .style('opacity', (d) => {
-              const conn = d.conexoes ?? 0
-              const minZoom = Math.max(0.15, 0.6 - conn * 0.025)
-              if (k < minZoom) return 0
-              if (k < minZoom + 0.2) return (k - minZoom) / 0.2
-              return 1
-            })
+          // Opacity só em função do zoom — simples e previsível:
+          //   k <= 1.0  → invisível (longe demais)
+          //   k = 1.5   → branco bem fraco (~0.25)
+          //   k = 2.0   → fraco (~0.5)
+          //   k = 2.5   → médio (~0.75)
+          //   k >= 3.0  → branco forte (1.0)
+          const opacity = Math.max(0, Math.min(1, (k - 1.0) / 2.0))
+
+          // Counter-scale: o transform do zoom escala todo o <g> por k, incluindo
+          // o texto. Pra evitar que as letras fiquem gigantes em zoom in e se
+          // sobreponham, dividimos font-size por k — o resultado visual fica
+          // aproximadamente constante independente do zoom.
+          const scaledFontSize = config.labelSize / k
+          gEl.selectAll('text.label')
+            .style('opacity', opacity)
+            .style('font-size', scaledFontSize + 'px')
         }
         updateLabelVisibilityRef.current = updateLabelVisibility
         const zoomBehavior = d3Zoom()
@@ -451,16 +491,24 @@ export function GraphTab({ dark }) {
       if (!g.node()) { setLoading(false); return }
       g.selectAll('*').remove()
 
+      // 3 camadas explícitas pra garantir z-order correto:
+      //   1. edges (fundo)
+      //   2. nodes (meio — círculos, recebem drag/hover/click)
+      //   3. labels (topo — sempre acima de tudo, nenhum círculo/aresta cobre)
+      const edgesLayer  = g.append('g').attr('class', 'edges-layer')
+      const nodesLayer  = g.append('g').attr('class', 'nodes-layer')
+      const labelsLayer = g.append('g').attr('class', 'labels-layer')
+
       // Edges
-      const linkSel = g.selectAll('line.edge')
+      const linkSel = edgesLayer.selectAll('line.edge')
         .data(simLinks)
         .enter().append('line')
         .attr('class', 'edge')
         .style('stroke', `rgba(180,170,155,${config.linkOpacity})`)
         .style('stroke-width', config.linkWidth)
 
-      // Nós (grupo com círculo + label)
-      const nodeSel = g.selectAll('g.node')
+      // Nós (só círculo — label vai pra layer própria). Sempre sólidos.
+      const nodeSel = nodesLayer.selectAll('g.node')
         .data(filteredNodes, d => d.id)
         .enter().append('g')
         .attr('class', 'node')
@@ -468,35 +516,39 @@ export function GraphTab({ dark }) {
 
       nodeSel.append('circle')
         .attr('r', d => config.nodeSize + Math.sqrt(d.conexoes) * 1.2)
-        .style('fill', d => d.cor || 'rgba(155,148,138,0.85)')
-        .style('opacity', d => d.isIsolado ? 0.4 : 1)
+        .style('fill', d => d.cor || COR_PADRAO)
+        .style('opacity', 1)
 
-      if (config.showLabels && filteredNodes.length <= LABEL_THRESHOLD) {
-        nodeSel.append('text')
-          .attr('class', 'label-halo')
-          .text(d => d.titulo)
-          .attr('dy', d => config.nodeSize + Math.sqrt(d.conexoes) * 1.2 + config.labelSize + 2)
-          .attr('text-anchor', 'middle')
-          .style('font-size', config.labelSize + 'px')
-          .style('stroke', 'rgba(10,9,8,0.85)')
-          .style('stroke-width', 3)
-          .style('fill', 'none')
+      // Labels numa layer própria, renderizada por cima de edges e nodes.
+      // Branco puro, sem halo. Opacity controlada por updateLabelVisibility
+      // (só em função do zoom). Cada label é um <g> com <text> dentro pro tick
+      // poder atualizar a posição via transform.
+      let labelGroups = null
+      let labelSel = null
+      if (config.showLabels) {
+        labelGroups = labelsLayer.selectAll('g.label-node')
+          .data(filteredNodes, d => d.id)
+          .enter().append('g')
+          .attr('class', 'label-node')
           .style('pointer-events', 'none')
-          .style('font-family', 'inherit')
-        nodeSel.append('text')
+
+        labelSel = labelGroups.append('text')
           .attr('class', 'label')
           .text(d => d.titulo)
           .attr('dy', d => config.nodeSize + Math.sqrt(d.conexoes) * 1.2 + config.labelSize + 2)
           .attr('text-anchor', 'middle')
           .style('font-size', config.labelSize + 'px')
-          .style('fill', 'rgba(200,192,178,0.6)')
+          .style('fill', '#ffffff')
           .style('pointer-events', 'none')
           .style('font-family', 'inherit')
+          .style('opacity', 0) // updateLabelVisibility ajusta dinamicamente
       }
 
       // Save selections for visual update effects
       linkSelRef.current = linkSel
       nodeSelRef.current = nodeSel
+      labelGroupsRef.current = labelGroups
+      labelSelRef.current = labelSel
 
       // ── Hover highlight (transições suaves) ─────────────────────────────
       nodeSel
@@ -530,34 +582,21 @@ export function GraphTab({ dark }) {
               const tId = typeof l.target === 'object' ? l.target.id : l.target
               return (sId === d.id || tId === d.id) ? config.linkWidth * 2 : config.linkWidth
             })
-          // Label on hover for many nodes
-          if (config.showLabels && filteredNodes.length > LABEL_THRESHOLD) {
-            if (select(event.currentTarget).select('text.hover-label').empty()) {
-              const base = config.nodeSize + Math.sqrt(d.conexoes) * 1.2
-              select(event.currentTarget).append('text')
-                .attr('class', 'hover-label')
-                .text(d.titulo)
-                .attr('dy', base + config.labelSize + 2)
-                .attr('text-anchor', 'middle')
-                .style('font-size', config.labelSize + 'px')
-                .style('fill', 'rgba(220,215,205,1.0)')
-                .style('pointer-events', 'none')
-            }
-          }
+          // Hover não cria tooltip extra — o label permanente já existe e se
+          // torna visível via zoom. Evita duplicação visual do nome.
         })
         .on('mouseleave', function(event, d) {
           if (isDragging.current) return
           // Volta ao tamanho normal
           select(this).select('circle').transition().duration(80)
             .attr('r', d => config.nodeSize + Math.sqrt(d.conexoes) * 1.2)
-          // Volta tudo ao normal
+          // Volta tudo ao normal — nós sempre sólidos (opacity 1)
           nodeSel.transition().duration(80)
-            .style('opacity', n => n.isIsolado ? 0.4 : 1)
+            .style('opacity', 1)
           linkSel.transition().duration(80)
             .style('stroke', `rgba(180,170,155,${config.linkOpacity})`)
             .style('stroke-opacity', 1)
             .style('stroke-width', config.linkWidth)
-          g.selectAll('text.hover-label').remove()
         })
 
       // Click no fundo fecha painel
@@ -595,13 +634,11 @@ export function GraphTab({ dark }) {
           // Reset highlight immediately on drag end
           select(this).select('circle')
             .attr('r', config.nodeSize + Math.sqrt(d.conexoes) * 1.2)
-          nodeSel.style('opacity', n => n.isIsolado ? 0.4 : 1)
+          nodeSel.style('opacity', 1)
           linkSel
             .style('stroke', `rgba(180,170,155,${config.linkOpacity})`)
             .style('stroke-opacity', 1)
             .style('stroke-width', config.linkWidth)
-          g.selectAll('text.hover-label').remove()
-
           // Se não moveu = foi clique = abre nota
           if (!dragMoved) {
             d.fx = null
@@ -677,6 +714,9 @@ export function GraphTab({ dark }) {
           .attr('x2', d => d.target.x)
           .attr('y2', d => d.target.y)
         nodeSel.attr('transform', d => `translate(${d.x},${d.y})`)
+        if (labelGroups) {
+          labelGroups.attr('transform', d => `translate(${d.x},${d.y})`)
+        }
       })
 
       sim.on('end', () => {
@@ -722,10 +762,12 @@ export function GraphTab({ dark }) {
     nodeSel.select('circle')
       .attr('r', d => config.nodeSize + Math.sqrt(d.conexoes) * 1.2)
 
-    // Atualizar labels (halo + label)
-    nodeSel.selectAll('text.label-halo, text.label')
-      .style('font-size', config.labelSize + 'px')
-      .attr('dy', d => config.nodeSize + Math.sqrt(d.conexoes) * 1.2 + config.labelSize + 2)
+    // Atualizar labels (agora em layer própria, via ref)
+    if (labelSelRef.current) {
+      labelSelRef.current
+        .style('font-size', config.labelSize + 'px')
+        .attr('dy', d => config.nodeSize + Math.sqrt(d.conexoes) * 1.2 + config.labelSize + 2)
+    }
 
     // Atualizar edges
     const corAresta = `rgba(180,170,155,${config.linkOpacity})`

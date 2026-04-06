@@ -106,9 +106,35 @@ const wikilinkPlugin = ViewPlugin.fromClass(class {
   build(view) {
     const builder = new RangeSetBuilder()
     const doc = view.state.doc.toString()
-    const re = /\[\[([^\]]+)\]\]/g
+
+    // 1. Detecta regiões de código que devem ser IGNORADAS:
+    //    - inline code: `...` (mesma linha)
+    //    - fence blocks: ```...``` (multilinha)
+    const skipRanges = []
+    const fenceRe = /```[\s\S]*?```/g
+    let fm
+    while ((fm = fenceRe.exec(doc)) !== null) {
+      skipRanges.push([fm.index, fm.index + fm[0].length])
+    }
+    const inlineRe = /`[^`\n]+`/g
+    let im
+    while ((im = inlineRe.exec(doc)) !== null) {
+      skipRanges.push([im.index, im.index + im[0].length])
+    }
+    const isInSkip = (pos) => {
+      for (const [s, e] of skipRanges) {
+        if (pos >= s && pos < e) return true
+      }
+      return false
+    }
+
+    // 2. Match de wikilinks. `[^\]\n]+` impede que o match atravesse linhas —
+    //    antes usávamos `[^\]]+` que aceitava \n e fazia um `[[ foo` numa linha
+    //    capturar tudo até um `]]` linhas depois.
+    const re = /\[\[([^\]\n]+)\]\]/g
     let m
     while ((m = re.exec(doc)) !== null) {
+      if (isInSkip(m.index)) continue
       // Skip attachment embeds — handled by image/pdf plugins
       if (ATTACHMENT_EXTS.test(m[1].split('|')[0])) continue
       builder.add(m.index, m.index + m[0].length, Decoration.mark({ class: 'cm-wikilink' }))

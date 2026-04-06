@@ -513,7 +513,7 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
           {!obsidianPath && !escaneando && (
             <button
               onClick={selecionarPasta}
-              className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-accent dark:bg-accent-dark text-white font-medium hover:opacity-90 transition-opacity"
+              className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-bg-2 dark:bg-bg-dark2 border border-bdr dark:border-bdr-dark text-ink dark:text-ink-dark font-medium hover:border-accent dark:hover:border-accent-dark hover:text-accent dark:hover:text-accent-dark transition-colors"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
@@ -593,7 +593,7 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
               <div className="flex items-center gap-3">
                 <button
                   onClick={iniciarImport}
-                  className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-accent dark:bg-accent-dark text-white font-medium hover:opacity-90 transition-opacity"
+                  className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-bg-2 dark:bg-bg-dark2 border border-bdr dark:border-bdr-dark text-ink dark:text-ink-dark font-medium hover:border-accent dark:hover:border-accent-dark hover:text-accent dark:hover:text-accent-dark transition-colors"
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <polyline points="16 16 12 12 8 16"/>
@@ -754,6 +754,10 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
               {cadernos.map(c => (
                 <option key={c.id} value={c.nome}>{c.nome}</option>
               ))}
+              {/* Fallback: se o valor atual é um path nested (ex: "Arquivo/Codex" após folder move), mostra como opção extra */}
+              {defaultCaderno && defaultCaderno.includes('/') && !cadernos.some(c => c.nome === defaultCaderno) && (
+                <option value={defaultCaderno}>{defaultCaderno} (subpasta)</option>
+              )}
             </select>
             {savedCaderno && (
               <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
@@ -795,6 +799,10 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
               {cadernos.map(c => (
                 <option key={c.id} value={c.nome}>{c.nome}</option>
               ))}
+              {/* Fallback: se o valor atual é um path nested (ex: "Arquivo/Codex" após folder move), mostra como opção extra */}
+              {journalCaderno && journalCaderno.includes('/') && !cadernos.some(c => c.nome === journalCaderno) && (
+                <option value={journalCaderno}>{journalCaderno} (subpasta)</option>
+              )}
             </select>
             {savedJournal && (
               <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
@@ -905,7 +913,7 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
                   <button
                     onClick={salvarTemplate}
                     disabled={!templateNome.trim() || templateSaving}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-accent dark:bg-accent-dark text-white disabled:opacity-40 hover:opacity-90 transition-opacity"
+                    className="text-xs px-3 py-1.5 rounded-lg bg-bg-2 dark:bg-bg-dark2 border border-bdr dark:border-bdr-dark text-ink dark:text-ink-dark font-medium hover:border-accent dark:hover:border-accent-dark hover:text-accent dark:hover:text-accent-dark disabled:opacity-40 transition-colors"
                   >
                     {templateSaving ? 'Salvando…' : 'Salvar template'}
                   </button>

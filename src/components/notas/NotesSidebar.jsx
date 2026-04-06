@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import ContextMenu from '../ui/ContextMenu'
 
 // ── Componentes internos ───────────────────────────────────────────────────────
 
@@ -18,7 +19,7 @@ function Arrow({ rotated }) {
   )
 }
 
-function NoteItem({ nota, selecionada, onSelect, onDelete, formatarData }) {
+function NoteItem({ nota, selecionada, onSelect, onDelete, formatarData, compact = false }) {
   return (
     <div
       draggable
@@ -30,17 +31,17 @@ function NoteItem({ nota, selecionada, onSelect, onDelete, formatarData }) {
         e.currentTarget.style.opacity = '0.4'
       }}
       onDragEnd={e => { e.currentTarget.style.opacity = '1' }}
-      className={`group relative flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-grab transition-colors ${
+      className={`group relative flex items-center gap-1.5 ${compact ? 'px-2 py-0.5' : 'px-2 py-1.5'} rounded-md cursor-grab transition-colors ${
         selecionada
           ? 'bg-accent/10 dark:bg-accent-dark/10'
           : 'hover:bg-bg-2 dark:hover:bg-bg-dark2'
       }`}
       onClick={() => onSelect(nota)}
     >
-      <span className="w-1 h-1 rounded-full bg-ink-3 dark:bg-ink-dark3 flex-shrink-0 opacity-40" />
+      <span className={`${compact ? 'w-0.5 h-0.5' : 'w-1 h-1'} rounded-full bg-ink-3 dark:bg-ink-dark3 flex-shrink-0 opacity-40`} />
       <div className="flex-1 min-w-0">
-        <div className="text-sm text-ink dark:text-ink-dark truncate">{nota.titulo || 'Sem título'}</div>
-        {nota.editadaEm > 0 && (
+        <div className={`${compact ? 'text-xs' : 'text-sm'} text-ink dark:text-ink-dark truncate`}>{nota.titulo || 'Sem título'}</div>
+        {!compact && nota.editadaEm > 0 && (
           <div className="text-xs text-ink-3 dark:text-ink-dark3">{formatarData(nota.editadaEm)}</div>
         )}
       </div>
@@ -52,20 +53,107 @@ function NoteItem({ nota, selecionada, onSelect, onDelete, formatarData }) {
   )
 }
 
-function SubpastaSection({ nome, notas, collapsed, onToggle, notaSelecionada, onSelect, onDelete, formatarData }) {
+/**
+ * Constrói uma árvore a partir de notas flat, usando n.subpasta como path.
+ * Retorna { notas: [], children: Map<string, Node> } onde children são sub-pastas.
+ * Ex: nota com subpasta="A/B" → root.children.get('A').children.get('B').notas
+ */
+function buildSubpastaTree(notas) {
+  const root = { notas: [], children: new Map() }
+  for (const n of notas) {
+    if (!n.subpasta) {
+      root.notas.push(n)
+      continue
+    }
+    const parts = String(n.subpasta).split(/[/\\]/).filter(Boolean)
+    let cur = root
+    for (const part of parts) {
+      if (!cur.children.has(part)) {
+        cur.children.set(part, { notas: [], children: new Map() })
+      }
+      cur = cur.children.get(part)
+    }
+    cur.notas.push(n)
+  }
+  return root
+}
+
+/** Conta recursivamente todas as notas sob um node (inclusive descendentes). */
+function contarNotasTree(node) {
+  let total = node.notas.length
+  for (const child of node.children.values()) total += contarNotasTree(child)
+  return total
+}
+
+/**
+ * Renderiza recursivamente uma subpasta (e suas descendentes) dentro de um caderno.
+ * Cada subpasta é draggable + drop target. Drop aceita folderPath (pasta) e
+ * notaId (nota — move pra essa subpasta).
+ */
+function SubpastaTreeNode({
+  nome, node, cadernoPai, pathPrefix,
+  expandedSubpastas, toggleSubpasta,
+  notaSelecionada, onSelect, onDelete, formatarData,
+  onMoverCaderno, onContextMenu,
+}) {
+  const [dragOver, setDragOver] = useState(false)
+  const fullSub = pathPrefix ? `${pathPrefix}/${nome}` : nome
+  const caminhoCompleto = `${cadernoPai}/${fullSub}`
+  const collapsed = !expandedSubpastas.has(caminhoCompleto)
+  const total = contarNotasTree(node)
+
   return (
-    <div>
+    <div
+      className={`rounded-md transition-colors ${dragOver ? 'bg-accent/15 dark:bg-accent-dark/15 ring-1 ring-accent/40 dark:ring-accent-dark/40' : ''}`}
+      onDragOver={e => {
+        const hasFolder = e.dataTransfer.types.includes('folderpath') || e.dataTransfer.types.includes('folderPath')
+        const hasNota   = e.dataTransfer.types.includes('notaid') || e.dataTransfer.types.includes('notaId')
+        if (!hasFolder && !hasNota) return
+        e.preventDefault()
+        e.stopPropagation()
+        e.dataTransfer.dropEffect = 'move'
+        setDragOver(true)
+      }}
+      onDragLeave={e => {
+        if (e.target === e.currentTarget) setDragOver(false)
+      }}
+      onDrop={e => {
+        e.preventDefault()
+        e.stopPropagation()
+        setDragOver(false)
+        const folderPath = e.dataTransfer.getData('folderPath')
+        if (folderPath && onMoverCaderno) {
+          // Self/cycle guards são aplicados no handler do NotasTab
+          onMoverCaderno(folderPath, caminhoCompleto)
+          return
+        }
+        // Drop de nota em subpasta: escopo dessa feature não inclui isso
+        // (drop de nota continua caindo no caderno pai via bubbling)
+      }}
+    >
       <button
-        onClick={onToggle}
-        className="w-full flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-ink-2 dark:text-ink-dark2 hover:bg-bg-2 dark:hover:bg-bg-dark2 transition-colors"
+        draggable
+        onDragStart={e => {
+          e.stopPropagation()
+          e.dataTransfer.setData('folderPath', caminhoCompleto)
+          e.dataTransfer.setData('folderKind', 'subpasta')
+          e.dataTransfer.effectAllowed = 'move'
+          e.currentTarget.style.opacity = '0.4'
+        }}
+        onDragEnd={e => { e.currentTarget.style.opacity = '1' }}
+        onClick={() => toggleSubpasta(caminhoCompleto)}
+        onContextMenu={e => { if (onContextMenu) onContextMenu(e, caminhoCompleto) }}
+        className="w-full flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-ink-2 dark:text-ink-dark2 hover:bg-bg-2 dark:hover:bg-bg-dark2 transition-colors cursor-grab"
+        title={`Arrastar ${caminhoCompleto}`}
       >
         <Arrow rotated={!collapsed} />
-        <span className="truncate font-medium">{nome.split('/').pop()}</span>
-        <span className="ml-auto text-ink-3 dark:text-ink-dark3 flex-shrink-0 opacity-60">{notas.length}</span>
+        <span className="truncate font-medium">{nome}</span>
+        <span className="ml-auto text-ink-3 dark:text-ink-dark3 flex-shrink-0 opacity-60">{total}</span>
       </button>
       {!collapsed && (
-        <div className="ml-2 pl-2 border-l border-bdr-2 dark:border-bdr-dark2">
-          {notas.map(n => (
+        <div className="ml-2 pl-2 border-l border-bdr-2 dark:border-bdr-dark2 space-y-0.5">
+          {/* Notas diretamente neste nível */}
+          {node.notas.map(n => (
             <NoteItem
               key={n.id}
               nota={n}
@@ -75,6 +163,26 @@ function SubpastaSection({ nome, notas, collapsed, onToggle, notaSelecionada, on
               formatarData={formatarData}
             />
           ))}
+          {/* Sub-pastas (recursivo) */}
+          {[...node.children.entries()]
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([childNome, childNode]) => (
+              <SubpastaTreeNode
+                key={childNome}
+                nome={childNome}
+                node={childNode}
+                cadernoPai={cadernoPai}
+                pathPrefix={fullSub}
+                expandedSubpastas={expandedSubpastas}
+                toggleSubpasta={toggleSubpasta}
+                notaSelecionada={notaSelecionada}
+                onSelect={onSelect}
+                onDelete={onDelete}
+                formatarData={formatarData}
+                onMoverCaderno={onMoverCaderno}
+                onContextMenu={onContextMenu}
+              />
+            ))}
         </div>
       )}
     </div>
@@ -169,15 +277,19 @@ function MachineFileItem({ filePath, vaultPath, badge, onSelect }) {
 export function NotesSidebar({
   cadernos,
   notas,
+  notasRaiz = [],
   caderno,
   setCaderno,
   notaSelecionada,
   setNotaSelecionada,
   onNovaNota,
+  onNovaNotaRaiz,
   onNovoCaderno,
   onDeletarCaderno,
   onDeletarNota,
   onMoverNota,
+  onMoverCaderno,
+  onFolderAction,
   notasPorCaderno = {},
   onCarregarCaderno,
   width,
@@ -189,6 +301,31 @@ export function NotesSidebar({
   const [novoCadernoMode, setNovoCadernoMode] = useState(false)
   const [nomeNovoCaderno, setNomeNovoCaderno] = useState('')
   const [dragOverCaderno, setDragOverCaderno] = useState(null)
+  const [dragOverRoot, setDragOverRoot] = useState(false)
+  // Context menu: { x, y, folderPath } | null
+  const [folderMenu, setFolderMenu] = useState(null)
+
+  function abrirFolderMenu(e, folderPath) {
+    e.preventDefault()
+    e.stopPropagation()
+    setFolderMenu({ x: e.clientX, y: e.clientY, folderPath })
+  }
+
+  function closeFolderMenu() {
+    setFolderMenu(null)
+  }
+
+  const folderMenuItems = folderMenu && onFolderAction ? [
+    { label: 'Nova nota',         onClick: () => onFolderAction('nova-nota',  folderMenu.folderPath) },
+    { label: 'Nova pasta',        onClick: () => onFolderAction('nova-pasta', folderMenu.folderPath) },
+    { separator: true },
+    { label: 'Mover para…',       onClick: () => onFolderAction('mover',      folderMenu.folderPath) },
+    { label: 'Renomear',          onClick: () => onFolderAction('renomear',   folderMenu.folderPath) },
+    { separator: true },
+    { label: 'Revelar no Finder', onClick: () => onFolderAction('revelar',    folderMenu.folderPath) },
+    { separator: true },
+    { label: 'Apagar',            onClick: () => onFolderAction('apagar',     folderMenu.folderPath), danger: true },
+  ] : []
 
   // Hemisphere collapse state (persisted)
   const [humanCollapsed, setHumanCollapsed] = useState(() => localStorage.getItem('paraverso-human-collapsed') === 'true')
@@ -363,6 +500,18 @@ export function NotesSidebar({
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
           </button>
           <button
+            onClick={() => { if (onNovaNotaRaiz) onNovaNotaRaiz() }}
+            className="text-xs text-ink-3 dark:text-ink-dark3 hover:text-accent dark:hover:text-accent-dark transition-colors"
+            title="Nova nota avulsa (raiz do vault)"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="12" y1="18" x2="12" y2="12"/>
+              <line x1="9" y1="15" x2="15" y2="15"/>
+            </svg>
+          </button>
+          <button
             onClick={() => setNovoCadernoMode(true)}
             className="text-xs text-ink-3 dark:text-ink-dark3 hover:text-accent dark:hover:text-accent-dark transition-colors"
             title="Novo caderno"
@@ -435,7 +584,30 @@ export function NotesSidebar({
       )}
 
       {/* Árvore unificada */}
-      <div className="flex-1 overflow-auto px-2 pb-2">
+      <div
+        className={`flex-1 overflow-auto px-2 pb-2 transition-colors ${dragOverRoot ? 'bg-accent/5 dark:bg-accent-dark/5' : ''}`}
+        onDragOver={e => {
+          // Root drop zone: só ativa quando o drop é no vazio (não capturado por filho)
+          if (e.target !== e.currentTarget) return
+          if (!e.dataTransfer.types.includes('folderPath') && !e.dataTransfer.types.includes('folderpath')) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'move'
+          setDragOverRoot(true)
+        }}
+        onDragLeave={e => {
+          if (e.target === e.currentTarget) setDragOverRoot(false)
+        }}
+        onDrop={e => {
+          if (e.target !== e.currentTarget) return
+          e.preventDefault()
+          setDragOverRoot(false)
+          const folderPath = e.dataTransfer.getData('folderPath')
+          if (folderPath && onMoverCaderno) {
+            // destParent vazio = raiz do vault
+            onMoverCaderno(folderPath, '')
+          }
+        }}
+      >
 
         {!humanCollapsed && cadernos.map(c => {
           const isAtivo    = caderno === c.nome
@@ -443,9 +615,18 @@ export function NotesSidebar({
 
           return (
             <div key={c.id} className="mb-0.5">
-              {/* Linha do caderno — drop target */}
+              {/* Linha do caderno — drop target (notas ou pastas) */}
               <div
-                className={`group/cad flex items-center rounded-md transition-colors ${
+                draggable
+                onDragStart={e => {
+                  e.dataTransfer.setData('folderPath', c.nome)
+                  e.dataTransfer.setData('folderKind', 'caderno')
+                  e.dataTransfer.effectAllowed = 'move'
+                  e.currentTarget.style.opacity = '0.5'
+                }}
+                onDragEnd={e => { e.currentTarget.style.opacity = '1' }}
+                onContextMenu={e => abrirFolderMenu(e, c.nome)}
+                className={`group/cad flex items-center rounded-md transition-colors cursor-grab ${
                   dragOverCaderno === c.nome
                     ? 'bg-accent/20 dark:bg-accent-dark/20 ring-1 ring-accent/40 dark:ring-accent-dark/40'
                     : ''
@@ -454,14 +635,23 @@ export function NotesSidebar({
                 onDragLeave={() => setDragOverCaderno(null)}
                 onDrop={e => {
                   e.preventDefault()
+                  e.stopPropagation()
                   setDragOverCaderno(null)
-                  console.debug('[DROP] evento no caderno:', c.nome)
-                  const notaId = e.dataTransfer.getData('notaId')
-                  const notaCadernoTransfer = e.dataTransfer.getData('notaCaderno')
-                  console.debug('[DROP] dataTransfer:', { notaId, notaCaderno: notaCadernoTransfer })
-                  if (!notaId) { console.error('[DROP] notaId vazio'); return }
 
-                  // Busca em todas as fontes — cache pode estar stale
+                  // 1. Drop de PASTA (caderno ou subpasta)
+                  const folderPath = e.dataTransfer.getData('folderPath')
+                  if (folderPath) {
+                    if (folderPath === c.nome) return // self
+                    // Cycle guard: c.nome não pode estar dentro de folderPath
+                    if (c.nome === folderPath || c.nome.startsWith(folderPath + '/')) return
+                    if (onMoverCaderno) onMoverCaderno(folderPath, c.nome)
+                    return
+                  }
+
+                  // 2. Drop de NOTA (comportamento original)
+                  const notaId = e.dataTransfer.getData('notaId')
+                  if (!notaId) return
+
                   let nota = notas.find(n => n.id === notaId)
                   if (!nota) {
                     for (const cads of Object.values(notasPorCaderno ?? {})) {
@@ -469,16 +659,9 @@ export function NotesSidebar({
                       if (nota) break
                     }
                   }
-
-                  if (!nota) {
-                    console.error('[DnD] nota não encontrada para id:', notaId)
-                    return
-                  }
-
-                  // Usa nota.caderno (fonte de verdade) em vez do dataTransfer
+                  if (!nota) nota = notasRaiz.find(n => n.id === notaId)
+                  if (!nota) return
                   if (nota.caderno === c.nome) return
-
-                  console.debug('[DnD] movendo nota:', { id: nota.id, titulo: nota.titulo, de: nota.caderno, para: c.nome, _filename: nota._filename, subpasta: nota.subpasta })
                   onMoverNota(nota, c.nome)
                 }}
               >
@@ -533,14 +716,10 @@ export function NotesSidebar({
                 >✕</button>
               </div>
 
-              {/* Filhos: notas — quando expandido (ativo usa notas prop, outros usam cache) */}
+              {/* Filhos: notas em árvore — quando expandido (ativo usa notas prop, outros usam cache) */}
               {isExpanded && (() => {
                 const notasDoCaderno = isAtivo ? notas : (notasPorCaderno[c.nome] ?? [])
-                const raiz = notasDoCaderno.filter(n => !n.subpasta)
-                const subs = {}
-                for (const n of notasDoCaderno) {
-                  if (n.subpasta) { if (!subs[n.subpasta]) subs[n.subpasta] = []; subs[n.subpasta].push(n) }
-                }
+                const tree = buildSubpastaTree(notasDoCaderno)
                 return (
                 <div className="ml-2 mt-0.5 pl-2 border-l border-bdr-2 dark:border-bdr-dark2 space-y-0.5">
                   {notasDoCaderno.length === 0 && (
@@ -549,7 +728,8 @@ export function NotesSidebar({
                     </p>
                   )}
 
-                  {raiz.map(n => (
+                  {/* Notas no topo do caderno (sem subpasta) */}
+                  {tree.notas.map(n => (
                     <NoteItem
                       key={n.id}
                       nota={n}
@@ -560,19 +740,24 @@ export function NotesSidebar({
                     />
                   ))}
 
-                  {Object.entries(subs)
+                  {/* Subpastas aninhadas como árvore recursiva */}
+                  {[...tree.children.entries()]
                     .sort(([a], [b]) => a.localeCompare(b))
-                    .map(([nome, notasPasta]) => (
-                      <SubpastaSection
+                    .map(([nome, node]) => (
+                      <SubpastaTreeNode
                         key={nome}
                         nome={nome}
-                        notas={notasPasta}
-                        collapsed={!expandedSubpastas.has(nome)}
-                        onToggle={() => toggleSubpasta(nome)}
+                        node={node}
+                        cadernoPai={c.nome}
+                        pathPrefix=""
+                        expandedSubpastas={expandedSubpastas}
+                        toggleSubpasta={toggleSubpasta}
                         notaSelecionada={notaSelecionada}
                         onSelect={setNotaSelecionada}
                         onDelete={onDeletarNota}
                         formatarData={formatarData}
+                        onMoverCaderno={onMoverCaderno}
+                        onContextMenu={abrirFolderMenu}
                       />
                     ))}
                 </div>
@@ -580,6 +765,23 @@ export function NotesSidebar({
             </div>
           )
         })}
+
+        {/* Notas raiz (sem caderno) — lista solta abaixo dos cadernos, compacta */}
+        {!humanCollapsed && notasRaiz.length > 0 && (
+          <div className="mt-2">
+            {notasRaiz.map(n => (
+              <NoteItem
+                key={n.id}
+                nota={n}
+                selecionada={notaSelecionada?.id === n.id}
+                onSelect={setNotaSelecionada}
+                onDelete={onDeletarNota}
+                formatarData={formatarData}
+                compact
+              />
+            ))}
+          </div>
+        )}
 
         {/* Input novo caderno */}
         {!humanCollapsed && novoCadernoMode && (
@@ -639,6 +841,16 @@ export function NotesSidebar({
       >
         <div className="w-full h-full opacity-0 group-hover:opacity-100 transition-opacity bg-accent dark:bg-accent-dark" />
       </div>
+
+      {/* Context menu de pasta (right-click em caderno ou subpasta) */}
+      {folderMenu && (
+        <ContextMenu
+          x={folderMenu.x}
+          y={folderMenu.y}
+          items={folderMenuItems}
+          onClose={closeFolderMenu}
+        />
+      )}
     </div>
   )
 }

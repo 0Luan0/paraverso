@@ -161,8 +161,8 @@ export default function ActivityBar({ abaAtiva, onAbaChange, onNotaDia, terminal
         <IconBrowser />
       </BarButton>
 
-      {/* Terminal IA */}
-      <BarButton label="IA (Terminal)" active={terminalOpen} onClick={onToggleTerminal} className="mb-1">
+      {/* Terminal */}
+      <BarButton label="Terminal" active={terminalOpen} onClick={onToggleTerminal} className="mb-1">
         <IconTerminal />
       </BarButton>
 

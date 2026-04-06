@@ -21,47 +21,10 @@ export default function BrowserPane({ vaultPath, onClose }) {
   const [canGoBack, setCanGoBack] = useState(false)
   const [canGoForward, setCanGoForward] = useState(false)
 
-  // Handle "Resumir com IA" from context menu
+  // "Resumir com IA" — placeholder (terminal removido, usar skills do Claude Code)
   const handleSummarize = useCallback(async ({ selectedText, url: pageUrl }) => {
-    try {
-      const scraped = await el().browser.scrapeUrl(pageUrl)
-
-      // Build context paths
-      const machinePath = await el().joinPath(vaultPath, '_machine')
-      const contextsPath = await el().joinPath(machinePath, 'contexts')
-      const templatesPath = await el().joinPath(machinePath, 'templates')
-
-      let pessoa = '', interesses = '', template = ''
-      try { pessoa = await el().machineContext.readContext(await el().joinPath(contextsPath, 'pessoa.md')) } catch {}
-      try { interesses = await el().machineContext.readContext(await el().joinPath(contextsPath, 'interesses.md')) } catch {}
-      try { template = await el().machineContext.readContext(await el().joinPath(templatesPath, 'pesquise.md')) } catch {}
-
-      const slug = pageUrl.replace(/https?:\/\//, '').replace(/[^a-zA-Z0-9]/g, '-').slice(0, 40)
-
-      const prompt = [
-        '[CONTEXTO DA PESSOA]',
-        pessoa || '[ainda vazio]',
-        '',
-        '[INTERESSES E REFERÊNCIAS]',
-        interesses || '[ainda vazio]',
-        '',
-        '[TEMPLATE DE COMPORTAMENTO]',
-        template || '[template padrão]',
-        '',
-        '[CONTEÚDO DA PÁGINA]',
-        `URL: ${pageUrl}`,
-        `Trecho selecionado: ${selectedText}`,
-        `Conteúdo: ${(scraped.content || '').slice(0, 3000)}`,
-        '',
-        '[TAREFA]',
-        `Resuma esta página conectando com os interesses da pessoa. Salve o resultado como _machine/contexts/${slug}.md`,
-      ].join('\\n')
-
-      el().terminal.write(prompt + '\r')
-    } catch (err) {
-      console.error('[Browser] erro ao resumir:', err)
-    }
-  }, [vaultPath])
+    console.log('[Browser] Resumir com IA desabilitado — use skills do Claude Code. URL:', pageUrl)
+  }, [])
 
   useEffect(() => {
     const wv = webviewRef.current

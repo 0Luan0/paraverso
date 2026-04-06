@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "vite-dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "/usr/local/bin/node",
+      "runtimeArgs": ["/Users/luanlucena/Documents/GitHub/paraverso/node_modules/vite/bin/vite.js", "--port", "5173"],
       "port": 5173
     },
     {
