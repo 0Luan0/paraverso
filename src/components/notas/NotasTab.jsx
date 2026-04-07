@@ -1,1278 +1,262 @@
 /**
- * NotasTab.jsx — Aba de notas do Paraverso
+ * NotasTab.jsx — Notes tab shell
  *
- * Arquitetura inspirada no Obsidian:
- * - Vault Index em memória: Map(titulo_normalizado → metadata) construído uma
- *   vez via getTodasNotasMetadata() (sem parsing de conteúdo). Wikilink click
- *   = lookup O(1), não scan de todos os arquivos.
- * - Navegação com histórico por aba (back/forward estilo browser).
- * - navKey: garante remount do NoteEditorCM a cada navegação → sem race condition.
- * - Backlinks: calculados de forma lazy ao abrir cada nota.
+ * Orchestrates hooks for vault index, tabs, autosave, and note actions.
+ * Renders: sidebar, editor, outline panel, modals.
  */
 
 import { useState, useEffect, useRef } from 'react'
 import {
-  db, getCadernos, criarCaderno, criarNotaVazia,
-  salvarNota, deletarNota, moverNota, getNotasPorCaderno, getTodasNotasMetadata,
-  getBacklinks, getVaultPath,
-  moverCaderno, remapCadernoConfigs, splitCadernoPath, propagarRename,
-  deletarCaderno, criarSubpasta, resolverPastaAbs,
+  criarNotaVazia, salvarNota, getNotasPorCaderno,
+  getBacklinks, splitCadernoPath,
 } from '../../db/index'
+import { useVaultIndex } from './useVaultIndex'
+import { useNoteTabs } from './useNoteTabs'
+import { useAutoSave } from './useAutoSave'
+import { useNoteActions } from './useNoteActions'
+import { useDailyNote } from './useDailyNote'
+import { useWikilinks } from './useWikilinks'
 import { useVault } from '../../contexts/VaultContext'
-import { MESES_PT_LOWER, DIAS_SEMANA } from '../../lib/mesUtils'
 import { NotesSidebar } from './NotesSidebar'
 import { NoteEditorCM } from './NoteEditorCM'
 import { OutlinePanel } from './OutlinePanel'
 import { TemplateModal } from './TemplateModal'
 import NoteActionsMenu from './NoteActionsMenu'
 import { useSidebarResize } from '../../hooks/useSidebarResize'
-import { InputModal, ConfirmModal, FolderPicker } from '../ui/Modals'
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function novoTab(caderno) {
-  return {
-    id: Math.random().toString(36).slice(2),
-    nota: null,
-    caderno: caderno || '',
-    history: [],
-    histIdx: -1,
-  }
-}
-
-async function deletarCadernoDB(id, nome) {
-  const notas = await getNotasPorCaderno(nome)
-  for (const n of notas) await deletarNota(n.id)
-  if (!getVaultPath()) await db.cadernos.delete(id)
-}
+import { NotasModals } from './NotasModals'
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaAtiva }) {
   const { vaultPath } = useVault()
 
-  const [cadernos, setCadernos] = useState([])
-  const [notas, setNotas]       = useState([])
   const [backlinks, setBacklinks] = useState([])
-  // Cache de notas por caderno — para expandir pastas sem mudar o caderno ativo
-  const [notasPorCaderno, setNotasPorCaderno] = useState({})
-  // Notas direto na raiz do vault (sem caderno) — lista solta no topo da sidebar
-  const [notasRaiz, setNotasRaiz] = useState([])
-
-  // Modal state pra ações do context menu de pastas: renomear, nova pasta, mover, apagar
-  // { type: 'input' | 'confirm' | 'picker', title, defaultValue?, onConfirm, folderPath? } | null
   const [folderModal, setFolderModal] = useState(null)
 
-  // Títulos commitados — chave: nota.id. Usado pra propagar rename de [[]] só
-  // uma vez por "sessão de edição" (navigate-away, menu rename, unmount), nunca
-  // a cada tecla do autosave.
-  const committedTitulosRef = useRef(new Map())
+  // Committed titles ref — key: note.id, value: title at time of navigation
+  const committedTitlesRef = useRef(new Map())
 
-  // Vault index: Map<string, metadata> — construído uma vez, atualizado após saves
-  // Usamos ref para não causar re-render ao atualizar o índice.
-  const vaultIndexRef = useRef(new Map())
-  const indexBuilding = useRef(false)
+  // Vault index
+  const { vaultIndexRef, buildVaultIndex, invalidateIndex, getSuggestions } = useVaultIndex(vaultPath)
+
+  // Shared refs (used by multiple hooks)
+  const saveTimer     = useRef(null)
+  const activeNoteRef = useRef(null)
+  const wasEditedRef  = useRef(false)
+  const commitTitleIfNeededRef = useRef(async () => {})
 
   // Tabs
-  const [tabs, setTabs]             = useState([novoTab('')])
-  const [tabAtivaIdx, setTabAtivaIdx] = useState(0)
+  const {
+    tabs, activeTabIdx, activeNote, activeNotebook, navKey,
+    canGoBack, canGoForward,
+    setNavKey, setTabs, updateTab, navigateTo, updateNoteInTab,
+    goBack, goForward, addTab, closeTab, switchTab,
+  } = useNoteTabs({
+    vaultIndexRef,
+    activeNoteRef,
+    wasEditedRef,
+    committedTitlesRef,
+    commitTitleIfNeeded: (...args) => commitTitleIfNeededRef.current(...args),
+    saveTimer,
+    setNotes: (v) => noteActionsRef.current?.setNotes?.(v),
+  })
 
-  // navKey: incrementado a cada navegação → garante remount do editor
-  const [navKey, setNavKey] = useState(0)
+  // Autosave
+  const { saveStatus, setSaveStatus, scheduleSave } = useAutoSave({
+    activeNoteRef,
+    saveTimer,
+    commitTitleIfNeeded: (...args) => commitTitleIfNeededRef.current(...args),
+  })
 
-  const saveTimer     = useRef(null)
-  const editorRef     = useRef(null)
-  const cmViewRef     = useRef(null)
+  // Note actions (CRUD, folder ops, menu handlers)
+  // Uses a ref so useNoteTabs setNotes callback can reach it
+  const noteActionsRef = useRef(null)
+  const actions = useNoteActions({
+    vaultPath,
+    activeNote,
+    activeNotebook,
+    activeNoteRef,
+    wasEditedRef,
+    committedTitlesRef,
+    vaultIndexRef,
+    buildVaultIndex,
+    invalidateIndex,
+    saveTimer,
+    saveStatus,
+    setSaveStatus,
+    scheduleSave,
+    navigateTo,
+    updateTab,
+    updateNoteInTab,
+    setTabs,
+    setFolderModal,
+  })
+  noteActionsRef.current = actions
+
+  const {
+    notebooks, notes, notesByNotebook, rootNotes,
+    loadNotebookNotes, createNote, createNotebook,
+    deleteNotebook, deleteNote, updateActiveNote, switchNote,
+    handleMoveNote, handleMoveNotebook, handleFolderAction,
+    commitTitleIfNeeded, handleMenuRename, handleMenuMove,
+    handleMenuDelete, handleMenuOpenExternal, setNotes,
+  } = actions
+
+  // Wire up commitTitleIfNeeded ref for other hooks
+  commitTitleIfNeededRef.current = commitTitleIfNeeded
+
+  // Editor refs
+  const editorRef = useRef(null)
+  const cmViewRef = useRef(null)
   const [outlineOpen, setOutlineOpen] = useState(false)
   const { width: sidebarWidth, collapsed: sidebarCollapsed, toggleCollapsed: toggleSidebar, onResizeStart: onSidebarResize } = useSidebarResize()
-  const notaAtivaRef  = useRef(null) // sempre a versão mais recente da nota ativa (síncrono, sem aguardar re-render)
-  const foiEditadaRef = useRef(false) // true quando o usuário editou o conteúdo desde que abriu a nota
   const [showTemplates, setShowTemplates] = useState(false)
 
-  // Status do autosave: 'idle' | 'saving' | 'saved' | 'error'
-  const [saveStatus, setSaveStatus] = useState('idle')
-  const saveStatusTimer = useRef(null)
+  // ── Notify active note to other components (GraphTab) ──────────────────────
+  useEffect(() => { onNotaAtiva?.(activeNote?.id ?? null) }, [activeNote?.id]) // eslint-disable-line
 
-  // Derived
-  const tabAtiva    = tabs[tabAtivaIdx] ?? tabs[0]
-  const notaAtiva   = tabAtiva?.nota    ?? null
-  const cadernoAtivo = tabAtiva?.caderno ?? ''
-  const canGoBack    = !!tabAtiva && tabAtiva.histIdx > 0
-  const canGoForward = !!tabAtiva && tabAtiva.histIdx < tabAtiva.history.length - 1
-
-  // ── Vault Index ─────────────────────────────────────────────────────────────
-
-  /**
-   * Constrói o índice plano do vault — metadata only, sem parsing de conteúdo.
-   * getTodasNotasMetadata() usa readdirRecursive e lê apenas o frontmatter.
-   * Indexa por titulo normalizado E por _filename, para cobrir:
-   *  - [[Nota com acentos]] (titulo)
-   *  - [[nota-com-acentos]] (filename stem)
-   */
-  async function buildVaultIndex() {
-    if (indexBuilding.current) return vaultIndexRef.current
-    indexBuilding.current = true
-    try {
-      // getTodasNotasMetadata() now includes _machine files (no longer in RESERVED_DIRS).
-      // Tag each note with its hemisphere for visual separation in graph/quickswitcher.
-      const metadata = await getTodasNotasMetadata()
-      const map = new Map()
-      for (const nota of metadata) {
-        nota.hemisphere = nota.caderno === '_machine' ? 'machine' : 'human'
-        const titleKey = nota.titulo?.normalize('NFC').toLowerCase()
-        const fnKey    = nota._filename?.normalize('NFC').toLowerCase()
-        // Título: só indexa se a chave ainda não existe (mais recente tem prioridade)
-        if (titleKey && !map.has(titleKey)) map.set(titleKey, nota)
-        // Filename: sempre indexa (filename é único por definição)
-        if (fnKey && fnKey !== titleKey) map.set(fnKey, nota)
-      }
-
-      vaultIndexRef.current = map
-      return map
-    } catch (err) {
-      console.warn('[VaultIndex] Falha ao construir índice:', err?.message)
-      return vaultIndexRef.current
-    } finally {
-      indexBuilding.current = false
-    }
-  }
-
-  // Constrói o índice ao montar e ao trocar vault
-  useEffect(() => { buildVaultIndex() }, [vaultPath])
-
-  // ── Sync com mudanças no Finder ─────────────────────────────────────────────
-  // Quando o usuário move/cria/apaga arquivos no Finder fora do app, o estado
-  // em memória fica stale. Re-varre o vault ao ganhar foco de janela.
-  useEffect(() => {
-    if (!vaultPath) return
-    async function refreshVault() {
-      try {
-        const novosCadernos = await getCadernos()
-        setCadernos(novosCadernos)
-        setNotasPorCaderno({})
-        await carregarNotasRaiz()
-        await buildVaultIndex()
-        // Reload active caderno + _machine (machine section reads from notasPorCaderno)
-        const reloads = []
-        if (cadernoAtivo) reloads.push(getNotasPorCaderno(cadernoAtivo).then(lista => setNotas(lista)))
-        reloads.push(getNotasPorCaderno('_machine').then(lista => setNotasPorCaderno(prev => ({ ...prev, _machine: lista }))))
-        await Promise.all(reloads)
-      } catch (err) {
-        console.warn('[refreshVault on focus] falha:', err?.message)
-      }
-    }
-    window.addEventListener('focus', refreshVault)
-    return () => window.removeEventListener('focus', refreshVault)
-  }, [vaultPath, cadernoAtivo]) // eslint-disable-line
-
-  // Flush do autosave ao fechar/encerrar o app.
-  // Usa notaAtivaRef (ref síncrono) em vez de notaAtiva (state React assíncrono).
-  // Motivo: setTabs() em atualizarNotaAtiva não atualiza o state React antes do
-  // próximo render — se beforeunload disparar antes do render, notaAtiva estaria
-  // stale e o conteúdo editado seria perdido.
-  useEffect(() => {
-    function flushSave() {
-      if (!saveTimer.current) return
-      clearTimeout(saveTimer.current)
-      saveTimer.current = null
-      const nota = notaAtivaRef.current // sempre tem a versão mais recente
-      if (nota) {
-        salvarNota(nota).catch(e => console.error('[Flush save]', e))
-        // Flush de propagação de wikilinks pendente pro rename desta nota
-        if (nota.id) commitTituloSePrecisar(nota.id).catch(() => {})
-      }
-    }
-    window.addEventListener('beforeunload', flushSave)
-    return () => {
-      window.removeEventListener('beforeunload', flushSave)
-      // Flush ao desmontar (troca de aba) — sem isso, o debounce pendente é perdido
-      flushSave()
-      // Limpa timer de status para evitar setState em componente desmontado
-      if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current)
-    }
-  }, []) // deps vazio: registra uma vez, sempre lê do ref
-
-  // Invalida índice após save de nota disparando rebuild em background.
-  // NÃO limpa o mapa — getSuggestions() ficaria com itens vazios durante o rebuild
-  // (700ms de lacuna) e o dropdown de autocomplete desapareceria permanentemente.
-  function invalidateIndex() {
-    buildVaultIndex() // non-blocking: atualiza vaultIndexRef.current quando terminar
-  }
-
-  // ── getSuggestions — autocomplete [[wikilink]] ───────────────────────────────
-  //
-  // Chamada pelo WikiLinkExtension com o texto digitado após "[[".
-  // Retorna até 8 notas que contenham `query` no título, priorizando
-  // matches de prefixo e notas mais recentes.
-  // Usa o vault index em memória (O(n) onde n = total de notas), sem I/O.
-
-  function getSuggestions(query) {
-    const q = (query || '').normalize('NFC').toLowerCase().trim()
-    const seen = new Set()
-    const human = []
-    const machine = []
-
-    for (const meta of vaultIndexRef.current.values()) {
-      if (!meta.titulo) continue
-      const key = meta.titulo.normalize('NFC').toLowerCase()
-      // For machine notes, also match on relativePath
-      const relKey = meta.relativePath?.normalize('NFC').toLowerCase() || ''
-      const dedupKey = meta.hemisphere === 'machine' ? (relKey || key) : key
-      if (seen.has(dedupKey)) continue
-      seen.add(dedupKey)
-
-      if (!q || key.includes(q) || relKey.includes(q)) {
-        const entry = {
-          titulo:       meta.titulo,
-          caderno:      meta.caderno || '',
-          subpasta:     meta.subpasta || '',
-          editadaEm:    meta.editadaEm || 0,
-          prefixo:      key.startsWith(q) || relKey.startsWith(q),
-          hemisphere:   meta.hemisphere || 'human',
-          relativePath: meta.relativePath || '',
-        }
-        if (meta.hemisphere === 'machine') machine.push(entry)
-        else human.push(entry)
-      }
-    }
-
-    const sortFn = (a, b) => {
-      if (a.prefixo !== b.prefixo) return a.prefixo ? -1 : 1
-      return b.editadaEm - a.editadaEm
-    }
-    human.sort(sortFn)
-    machine.sort(sortFn)
-
-    // 4 human + 4 machine max, or fill remaining slots
-    const hSlice = human.slice(0, machine.length > 0 ? 4 : 8)
-    const mSlice = machine.slice(0, human.length > 0 ? 4 : 8)
-    return [...hSlice, ...mSlice]
-  }
-
-  // ── Tab mutation helpers ─────────────────────────────────────────────────────
-
-  function mutarTab(updater) {
-    setTabs(prev => {
-      const next    = [...prev]
-      const patches = updater(next[tabAtivaIdx])
-      if (!patches || Object.keys(patches).length === 0) return prev
-      next[tabAtivaIdx] = { ...next[tabAtivaIdx], ...patches }
-      return next
-    })
-  }
-
-  function navigarPara(nota, caderno) {
-    if (!nota) return
-    const targetCaderno = caderno ?? nota?.caderno ?? cadernoAtivo
-
-    // Antes de sair da nota atual, se o título dela mudou desde o último commit,
-    // propaga [[]] pelo vault. Fire-and-forget (não bloqueia a navegação).
-    const anteriorId = notaAtivaRef.current?.id
-    if (anteriorId && anteriorId !== nota.id) {
-      commitTituloSePrecisar(anteriorId).catch(() => {})
-    }
-
-    // Registra o título atual da nova nota como "committed" pra comparar depois
-    if (nota.id && nota.titulo && !committedTitulosRef.current.has(nota.id)) {
-      committedTitulosRef.current.set(nota.id, nota.titulo)
-    }
-
-    foiEditadaRef.current = false
-    notaAtivaRef.current = nota
-    setNavKey(k => k + 1)
-    mutarTab(tab => {
-      const novoHistory = [...tab.history.slice(0, tab.histIdx + 1), nota.id]
-      return { nota, caderno: targetCaderno, history: novoHistory, histIdx: novoHistory.length - 1 }
-    })
-  }
-
-  function atualizarNotaNoTab(nota) {
-    mutarTab(() => ({ nota }))
-  }
-
-  // ── Notifica nota ativa para outros componentes (GraphTab) ──────────────────
-  useEffect(() => { onNotaAtiva?.(notaAtiva?.id ?? null) }, [notaAtiva?.id]) // eslint-disable-line
-
-  // ── Backlinks (lazy, calculados ao abrir nota) ───────────────────────────────
+  // ── Backlinks (lazy, computed when note opens) ──────────────────────────────
 
   useEffect(() => {
-    if (!notaAtiva?.titulo) { setBacklinks([]); return }
+    if (!activeNote?.titulo) { setBacklinks([]); return }
     let cancelled = false
-    getBacklinks(notaAtiva.titulo)
+    getBacklinks(activeNote.titulo)
       .then(bls => {
         if (!cancelled) {
-          // Exclui a própria nota dos backlinks
-          setBacklinks(bls.filter(b => b._filename !== notaAtiva._filename && b.id !== notaAtiva.id))
+          setBacklinks(bls.filter(b => b._filename !== activeNote._filename && b.id !== activeNote.id))
         }
       })
       .catch(() => { if (!cancelled) setBacklinks([]) })
     return () => { cancelled = true }
-  }, [notaAtiva?.id, notaAtiva?.titulo, notaAtiva?._filename]) // eslint-disable-line
-
-  // ── Back / Forward ──────────────────────────────────────────────────────────
-
-  async function goBack() {
-    const tabSnapshot = tabAtivaIdx
-    const tab = tabs[tabSnapshot]
-    if (!tab || tab.histIdx <= 0) return
-    const novoIdx = tab.histIdx - 1
-    const notaId = tab.history[novoIdx]
-    // Busca na lista atual, senão busca no vault
-    let nota = notas.find(n => n.id === notaId)
-    if (!nota) {
-      // Nota pode estar em outro caderno — busca via vault index
-      for (const meta of vaultIndexRef.current.values()) {
-        if (meta.id === notaId) {
-          const lista = await getNotasPorCaderno(meta.caderno)
-          if (tabAtivaIdx !== tabSnapshot) return // aba mudou durante await
-          setNotas(lista)
-          nota = lista.find(n => n.id === notaId)
-          break
-        }
-      }
-    }
-    if (!nota || tabAtivaIdx !== tabSnapshot) return
-    foiEditadaRef.current = false
-    notaAtivaRef.current = nota
-    setNavKey(k => k + 1)
-    setTabs(prev => prev.map((t, i) => i === tabSnapshot ? { ...t, nota, caderno: nota.caderno || t.caderno, histIdx: novoIdx } : t))
-  }
-
-  async function goForward() {
-    const tabSnapshot = tabAtivaIdx
-    const tab = tabs[tabSnapshot]
-    if (!tab || tab.histIdx >= tab.history.length - 1) return
-    const novoIdx = tab.histIdx + 1
-    const notaId = tab.history[novoIdx]
-    let nota = notas.find(n => n.id === notaId)
-    if (!nota) {
-      for (const meta of vaultIndexRef.current.values()) {
-        if (meta.id === notaId) {
-          const lista = await getNotasPorCaderno(meta.caderno)
-          if (tabAtivaIdx !== tabSnapshot) return // aba mudou durante await
-          setNotas(lista)
-          nota = lista.find(n => n.id === notaId)
-          break
-        }
-      }
-    }
-    if (!nota || tabAtivaIdx !== tabSnapshot) return
-    foiEditadaRef.current = false
-    notaAtivaRef.current = nota
-    setNavKey(k => k + 1)
-    setTabs(prev => prev.map((t, i) => i === tabSnapshot ? { ...t, nota, caderno: nota.caderno || t.caderno, histIdx: novoIdx } : t))
-  }
-
-  // ── Tab management ──────────────────────────────────────────────────────────
-
-  function addTab() {
-    const newIdx = tabs.length
-    setTabs(prev => [...prev, novoTab(cadernoAtivo)])
-    setTabAtivaIdx(newIdx)
-  }
-
-  function closeTab(e, idx) {
-    e.stopPropagation()
-    if (tabs.length === 1) return
-    if (idx === tabAtivaIdx && saveTimer.current) {
-      clearTimeout(saveTimer.current)
-      const nota = notaAtivaRef.current || notaAtiva
-      if (nota) salvarNota(nota)
-      saveTimer.current = null
-    }
-    setTabs(prev => prev.filter((_, i) => i !== idx))
-    setTabAtivaIdx(prev => {
-      if (prev === idx)  return Math.max(0, idx - 1)
-      if (prev > idx)    return prev - 1
-      return prev
-    })
-  }
-
-  async function switchTab(idx) {
-    if (idx === tabAtivaIdx) return
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current)
-      const nota = notaAtivaRef.current || notaAtiva
-      if (nota) await salvarNota(nota)
-      saveTimer.current = null
-    }
-    setTabAtivaIdx(idx)
-  }
-
-  // ── Load cadernos on vault change ────────────────────────────────────────────
-
-  useEffect(() => {
-    getCadernos().then(lista => {
-      setCadernos(lista)
-      if (lista.length > 0) {
-        setTabs(prev => {
-          if (prev[0].caderno) return prev
-          const next = [...prev]
-          next[0] = { ...next[0], caderno: lista[0].nome }
-          return next
-        })
-      }
-    })
-    // Carrega notas "soltas" na raiz do vault (sem caderno)
-    carregarNotasRaiz()
-  }, [vaultPath]) // eslint-disable-line
-
-  // ── Notas raiz (sem caderno) ─────────────────────────────────────────────────
-
-  async function carregarNotasRaiz() {
-    if (!vaultPath) { setNotasRaiz([]); return }
-    try {
-      const lista = await getNotasPorCaderno('')
-      setNotasRaiz(lista || [])
-    } catch {
-      setNotasRaiz([])
-    }
-  }
-
-  // ── Load notas when cadernoAtivo changes ─────────────────────────────────────
-
-  useEffect(() => {
-    if (!cadernoAtivo) return
-    getNotasPorCaderno(cadernoAtivo)
-      .then(lista => {
-        setNotas(lista)
-        // Não auto-seleciona a primeira nota — usuário escolhe qual abrir
-      })
-      .catch(() => setNotas([]))
-  }, [cadernoAtivo, vaultPath]) // eslint-disable-line
-
-  // Carrega notas de um caderno SEM mudar o caderno ativo (para expandir na sidebar)
-  async function carregarCaderno(nome) {
-    if (notasPorCaderno[nome]) return
-    try {
-      const lista = await getNotasPorCaderno(nome)
-      setNotasPorCaderno(prev => ({ ...prev, [nome]: lista }))
-    } catch {
-      // On error, set empty array so sidebar shows "Nenhuma nota ainda." instead of "Carregando..."
-      setNotasPorCaderno(prev => ({ ...prev, [nome]: [] }))
-    }
-  }
-
-  // Atualiza cache quando caderno ativo carrega
-  // (mantém notasPorCaderno sincronizado com notas do caderno ativo)
-  // eslint-disable-next-line
-  useEffect(() => {
-    if (cadernoAtivo && notas.length > 0) {
-      setNotasPorCaderno(prev => ({ ...prev, [cadernoAtivo]: notas }))
-    }
-  }, [notas, cadernoAtivo])
-
-  // ── CRUD ─────────────────────────────────────────────────────────────────────
-
-  async function novaNota(tituloInicial, cadernoDestino, subpasta) {
-    const caderno = cadernoDestino !== undefined ? cadernoDestino : cadernoAtivo
-    const nota    = criarNotaVazia(caderno || '')
-    if (subpasta) nota.subpasta = subpasta
-    // Gera nome único para evitar duplicatas
-    const nomeBase = tituloInicial || nota.titulo
-    // caderno === '' → notas da raiz do vault
-    const lista = caderno ? await getNotasPorCaderno(caderno) : notasRaiz
-    const nomesExistentes = lista.map(n => n.titulo)
-    if (nomesExistentes.includes(nomeBase)) {
-      let i = 2
-      while (nomesExistentes.includes(`${nomeBase} ${i}`)) i++
-      nota.titulo = `${nomeBase} ${i}`
-    } else {
-      nota.titulo = nomeBase
-    }
-    await salvarNota(nota)
-    invalidateIndex()
-    if (caderno) {
-      const listaAtualizada = await getNotasPorCaderno(caderno)
-      setNotas(listaAtualizada)
-    } else {
-      await carregarNotasRaiz()
-    }
-    navigarPara(nota, caderno || '')
-    return nota
-  }
-
-  async function novoCaderno(nome) {
-    await criarCaderno(nome)
-    const lista = await getCadernos()
-    setCadernos(lista)
-    mutarTab(() => ({ caderno: nome, nota: null }))
-  }
-
-  async function deletarCaderno(id, nome) {
-    if (!confirm(`Remover o caderno "${nome}" e todas as suas notas?`)) return
-    await deletarCadernoDB(id, nome)
-    invalidateIndex()
-    const lista = await getCadernos()
-    setCadernos(lista)
-    if (lista.length > 0) mutarTab(() => ({ caderno: lista[0].nome, nota: null }))
-    else                  mutarTab(() => ({ caderno: '', nota: null }))
-  }
-
-  async function deletar(id) {
-    await deletarNota(id)
-    invalidateIndex()
-    await buildVaultIndex()
-    // Limpa cache por caderno — qualquer caderno pode ter tido uma nota deletada
-    setNotasPorCaderno({})
-    // Refresca notas raiz (podem ter sido afetadas)
-    await carregarNotasRaiz()
-    // Reload active caderno + _machine
-    const reloads = []
-    if (cadernoAtivo) reloads.push(getNotasPorCaderno(cadernoAtivo))
-    reloads.push(getNotasPorCaderno('_machine').then(lista => setNotasPorCaderno(prev => ({ ...prev, _machine: lista }))))
-    const [lista] = await Promise.all(reloads)
-    if (cadernoAtivo && lista) setNotas(lista)
-
-    if (notaAtiva?.id === id) {
-      // Proxima nota: pega do cadernoAtivo, senao da raiz, senao null
-      const candidatas = cadernoAtivo ? lista : notasRaiz
-      const prox = candidatas.length > 0 ? candidatas[0] : null
-      if (prox) navigarPara(prox, prox.caderno || '')
-      else      mutarTab(() => ({ nota: null }))
-    }
-  }
-
-  function atualizarNotaAtiva(campos) {
-    // Usa notaAtivaRef (síncrono) em vez de notaAtiva (React state, pode ser stale).
-    // Isso evita que _rawMarkdown reaparece via spread de um state antigo.
-    const base = notaAtivaRef.current || notaAtiva
-    if (!base) return
-    const atualizada = { ...base, ...campos }
-    // CodeMirror: _rawMarkdown É o conteúdo — nunca deletar.
-    // Legado TipTap: se conteudo é objeto JSON, deleta _rawMarkdown.
-    if (campos.conteudo && typeof campos.conteudo === 'object' && campos.conteudo?.type === 'doc') {
-      delete atualizada._rawMarkdown
-      foiEditadaRef.current = true
-    }
-    // Atualiza ref ANTES do setTabs (síncrono) para que beforeunload e
-    // closeTab/switchTab sempre tenham acesso à versão mais recente da nota.
-    notaAtivaRef.current = atualizada
-    atualizarNotaNoTab(atualizada)
-    setNotas(prev => prev.map(n => n.id === atualizada.id ? atualizada : n))
-    setSaveStatus('idle')
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    // Não agenda save se a nota não foi editada E só abriu sem tocar
-    // (evita round-trip lossy em templates). Permite save de titulo/tags.
-    if (!foiEditadaRef.current && !campos.titulo && !campos.tags && atualizada._rawMarkdown !== undefined) return
-    saveTimer.current = setTimeout(async () => {
-      setSaveStatus('saving')
-      try {
-        await salvarNota(atualizada)
-        invalidateIndex() // após salvar, invalida índice para próximo acesso reindexar
-        setSaveStatus('saved')
-        if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current)
-        saveStatusTimer.current = setTimeout(() => setSaveStatus('idle'), 2000)
-      } catch (err) {
-        console.error('[Autosave] Falha ao salvar nota:', err)
-        setSaveStatus('error')
-        if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current)
-        saveStatusTimer.current = setTimeout(() => setSaveStatus('idle'), 4000)
-      }
-    }, 700)
-  }
-
-  function trocarNota(nota) {
-    if (nota.id === notaAtiva?.id) return // já está aberta
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current)
-      const anterior = notaAtivaRef.current || notaAtiva
-      if (anterior) salvarNota(anterior)
-      saveTimer.current = null
-    }
-    notaAtivaRef.current = nota
-    navigarPara(nota, nota.caderno || cadernoAtivo)
-  }
-
-  // ── Mover nota entre cadernos (drag & drop) ──────────────────────────────────
-
-  async function handleMoverNota(nota, novoCaderno, novaSubpasta) {
-    if (!nota) { console.error('[handleMoverNota] nota é undefined'); return }
-    if (!novoCaderno) { console.error('[handleMoverNota] novoCaderno é undefined'); return }
-    // Skip if already in exact same location
-    if (nota.caderno === novoCaderno && (nota.subpasta || undefined) === (novaSubpasta || undefined)) {
-      console.debug('[handleMoverNota] mesma localização, ignorando')
-      return
-    }
-
-    const cadernoOrigem = nota.caderno
-    console.debug('[handleMoverNota] iniciando:', { titulo: nota.titulo, de: cadernoOrigem, subDe: nota.subpasta, para: novoCaderno, subPara: novaSubpasta })
-
-    try {
-      // 1. Espera o move no filesystem terminar completamente
-      await moverNota(nota, novoCaderno, novaSubpasta)
-
-      // 2. Remove da lista ativa (se estiver nela)
-      setNotas(prev => prev.filter(n => n.id !== nota.id))
-
-      // 3. Invalida cache de ambos os cadernos APÓS o move ter sucesso
-      setNotasPorCaderno(prev => {
-        const next = { ...prev }
-        delete next[cadernoOrigem]
-        delete next[novoCaderno]
-        return next
-      })
-
-      // 4. Força reload das pastas que estavam expandidas/ativas
-      const reloads = []
-      reloads.push(
-        getNotasPorCaderno(cadernoOrigem)
-          .then(lista => setNotasPorCaderno(prev => ({ ...prev, [cadernoOrigem]: lista })))
-          .catch(() => {})
-      )
-      reloads.push(
-        getNotasPorCaderno(novoCaderno)
-          .then(lista => setNotasPorCaderno(prev => ({ ...prev, [novoCaderno]: lista })))
-          .catch(() => {})
-      )
-      await Promise.all(reloads)
-
-      // 5. Se a nota movida estava ativa, navega para ela no novo caderno
-      if (notaAtiva?.id === nota.id) {
-        const lista = await getNotasPorCaderno(novoCaderno)
-        setNotas(lista)
-        const completa = lista.find(n => n.id === nota.id)
-        if (completa) navigarPara(completa, novoCaderno)
-      }
-
-      invalidateIndex()
-    } catch (e) {
-      console.error('[handleMoverNota] falhou:', e)
-    }
-  }
-
-  // ── Mover caderno/subpasta (folder drag & drop) ──────────────────────────────
-
-  async function handleMoverCaderno(sourceRelPath, destParentRelPath) {
-    if (!sourceRelPath || !vaultPath) return
-    const basename = sourceRelPath.split(/[/\\]/).pop()
-    const targetRelPath = destParentRelPath
-      ? `${destParentRelPath}/${basename}`
-      : basename // destParentRelPath vazio = drop na raiz do vault
-
-    try {
-      // Flush de commit de título pendente antes do move
-      if (notaAtiva?.id) await commitTituloSePrecisar(notaAtiva.id)
-
-      const result = await moverCaderno(vaultPath, sourceRelPath, targetRelPath)
-      if (result?.noop) return
-
-      // Reescreve configs que apontavam pra pasta movida
-      const updates = await remapCadernoConfigs(sourceRelPath, targetRelPath)
-      for (const u of updates) {
-        window.dispatchEvent(new CustomEvent('paraverso:toast', {
-          detail: { tipo: 'info', mensagem: `Config ${u.key}: ${u.from} → ${u.to}` }
-        }))
-      }
-
-      // Notifica outros módulos que reagem a moves de pasta (ex: grupos de cor do GraphTab)
-      window.dispatchEvent(new CustomEvent('paraverso:pasta-movida', {
-        detail: { from: sourceRelPath, to: targetRelPath }
-      }))
-
-      // Refresh total: cadernos, cache, notas raiz, índice
-      const novos = await getCadernos()
-      setCadernos(novos)
-      setNotasPorCaderno({})
-      await carregarNotasRaiz()
-      invalidateIndex()
-      await buildVaultIndex()
-
-      // Reload _machine notes (cache was wiped)
-      getNotasPorCaderno('_machine').then(lista => setNotasPorCaderno(prev => ({ ...prev, _machine: lista })))
-
-      // Se o caderno top-level ativo sumiu (virou subpasta), ativa o primeiro disponível
-      const topAtivo = cadernoAtivo?.split('/')[0]
-      const topFrom  = sourceRelPath.split('/')[0]
-      if (topAtivo === topFrom && !novos.find(c => c.nome === cadernoAtivo)) {
-        mutarTab(() => ({ caderno: novos[0]?.nome || '', nota: null }))
-      } else if (cadernoAtivo) {
-        const lista = await getNotasPorCaderno(cadernoAtivo)
-        setNotas(lista)
-      }
-
-      window.dispatchEvent(new CustomEvent('paraverso:toast', {
-        detail: { tipo: 'info', mensagem: `Pasta movida: ${sourceRelPath} → ${targetRelPath || '(raiz)'}` }
-      }))
-    } catch (err) {
-      console.error('[handleMoverCaderno] falhou:', err)
-      window.dispatchEvent(new CustomEvent('paraverso:toast', {
-        detail: { tipo: 'erro', mensagem: err?.message || 'Falha ao mover pasta' }
-      }))
-    }
-  }
-
-  // ── Refresh completo do vault (reusado em várias ações de pasta) ────────────
-
-  async function refreshVaultState() {
-    const novos = await getCadernos()
-    setCadernos(novos)
-    setNotasPorCaderno({})
-    await carregarNotasRaiz()
-    invalidateIndex()
-    await buildVaultIndex()
-    // Reload active caderno + _machine (machine section reads from notasPorCaderno)
-    const reloads = []
-    if (cadernoAtivo) reloads.push(getNotasPorCaderno(cadernoAtivo).then(lista => setNotas(lista)))
-    reloads.push(getNotasPorCaderno('_machine').then(lista => setNotasPorCaderno(prev => ({ ...prev, _machine: lista }))))
-    await Promise.all(reloads)
-    return novos
-  }
-
-  // ── Context menu actions pra pastas (caderno ou subpasta) ───────────────────
-  //
-  // folderRelPath é relativo ao vault. Para top-level: "Codex". Para subpasta: "Codex/Leituras".
-  // action: 'nova-nota' | 'nova-pasta' | 'renomear' | 'mover' | 'revelar' | 'apagar'
-
-  async function handleFolderAction(action, folderRelPath) {
-    if (!folderRelPath || !vaultPath) return
-    const basename = folderRelPath.split(/[/\\]/).pop()
-    const parentPath = folderRelPath.split(/[/\\]/).slice(0, -1).join('/')
-
-    try {
-      switch (action) {
-        case 'nova-nota': {
-          // Cria nota dentro dessa pasta. Split pra caderno+subpasta.
-          const { caderno: cadTop, subpasta: sub } = splitCadernoPath(folderRelPath)
-          await novaNota(undefined, cadTop || '', sub || undefined)
-          break
-        }
-
-        case 'nova-pasta': {
-          setFolderModal({
-            type: 'input',
-            title: `Nova pasta em ${folderRelPath || 'raiz'}`,
-            placeholder: 'Nome da pasta',
-            defaultValue: '',
-            onConfirm: async (nome) => {
-              setFolderModal(null)
-              try {
-                await criarSubpasta(vaultPath, folderRelPath, nome)
-                await refreshVaultState()
-                window.dispatchEvent(new CustomEvent('paraverso:toast', {
-                  detail: { tipo: 'info', mensagem: `Pasta criada: ${folderRelPath}/${nome}` }
-                }))
-              } catch (err) {
-                window.dispatchEvent(new CustomEvent('paraverso:toast', {
-                  detail: { tipo: 'erro', mensagem: err?.message || 'Falha ao criar pasta' }
-                }))
-              }
-            },
-          })
-          break
-        }
-
-        case 'renomear': {
-          setFolderModal({
-            type: 'input',
-            title: `Renomear ${basename}`,
-            placeholder: 'Novo nome',
-            defaultValue: basename,
-            onConfirm: async (novoNome) => {
-              setFolderModal(null)
-              if (novoNome === basename) return
-              const novoPath = parentPath ? `${parentPath}/${novoNome}` : novoNome
-              try {
-                // Rename = mover pro MESMO parent com nome diferente.
-                // Não podemos usar handleMoverCaderno porque ele usa basename(source).
-                // Chamamos moverCaderno direto com o path completo novo.
-                const result = await moverCaderno(vaultPath, folderRelPath, novoPath)
-                if (result?.noop) return
-
-                // Propaga rename pra configs que apontavam pra pasta antiga
-                const updates = await remapCadernoConfigs(folderRelPath, novoPath)
-                for (const u of updates) {
-                  window.dispatchEvent(new CustomEvent('paraverso:toast', {
-                    detail: { tipo: 'info', mensagem: `Config ${u.key}: ${u.from} → ${u.to}` }
-                  }))
-                }
-
-                // Notifica outros módulos (grupos de cor do GraphTab, etc)
-                window.dispatchEvent(new CustomEvent('paraverso:pasta-movida', {
-                  detail: { from: folderRelPath, to: novoPath }
-                }))
-
-                const novos = await refreshVaultState()
-                // Se o caderno ativo era essa pasta renomeada, ativa o novo nome
-                const topFrom = folderRelPath.split('/')[0]
-                const topTo   = novoPath.split('/')[0]
-                if (cadernoAtivo === topFrom) {
-                  mutarTab(() => ({ caderno: novos.find(c => c.nome === topTo)?.nome || novos[0]?.nome || '', nota: null }))
-                }
-
-                window.dispatchEvent(new CustomEvent('paraverso:toast', {
-                  detail: { tipo: 'info', mensagem: `Renomeada: ${folderRelPath} → ${novoPath}` }
-                }))
-              } catch (err) {
-                window.dispatchEvent(new CustomEvent('paraverso:toast', {
-                  detail: { tipo: 'erro', mensagem: err?.message || 'Falha ao renomear pasta' }
-                }))
-              }
-            },
-          })
-          break
-        }
-
-        case 'mover': {
-          setFolderModal({
-            type: 'picker',
-            folderPath: folderRelPath,
-            onConfirm: async (destParent) => {
-              setFolderModal(null)
-              if (destParent === parentPath) return // mesmo lugar
-              await handleMoverCaderno(folderRelPath, destParent)
-            },
-          })
-          break
-        }
-
-        case 'revelar': {
-          const absPath = await resolverPastaAbs(vaultPath, folderRelPath)
-          if (window.electron?.showItemInFinder) {
-            await window.electron.showItemInFinder(absPath)
-          } else if (window.electron?.openPath) {
-            await window.electron.openPath(absPath)
-          }
-          break
-        }
-
-        case 'apagar': {
-          setFolderModal({
-            type: 'confirm',
-            message: `Apagar "${folderRelPath}" e todo o conteúdo (notas e subpastas)? Esta ação não pode ser desfeita.`,
-            confirmLabel: 'Apagar pasta',
-            onConfirm: async () => {
-              setFolderModal(null)
-              try {
-                await deletarCaderno(vaultPath, folderRelPath)
-                // Se o caderno ativo foi deletado, ativa o primeiro disponível
-                const novos = await refreshVaultState()
-                const topFrom = folderRelPath.split('/')[0]
-                if (cadernoAtivo === topFrom && !novos.find(c => c.nome === cadernoAtivo)) {
-                  mutarTab(() => ({ caderno: novos[0]?.nome || '', nota: null }))
-                }
-                window.dispatchEvent(new CustomEvent('paraverso:toast', {
-                  detail: { tipo: 'info', mensagem: `Pasta apagada: ${folderRelPath}` }
-                }))
-              } catch (err) {
-                window.dispatchEvent(new CustomEvent('paraverso:toast', {
-                  detail: { tipo: 'erro', mensagem: err?.message || 'Falha ao apagar pasta' }
-                }))
-              }
-            },
-          })
-          break
-        }
-      }
-    } catch (err) {
-      console.error('[handleFolderAction] erro:', err)
-      window.dispatchEvent(new CustomEvent('paraverso:toast', {
-        detail: { tipo: 'erro', mensagem: err?.message || 'Erro' }
-      }))
-    }
-  }
-
-  // ── Commit de título: propagação de [[]] em wikilinks ────────────────────────
-  //
-  // Roda UMA vez por "sessão de edição" de uma nota:
-  //   - Ao navegar pra outra nota (navigarPara)
-  //   - Ao fechar/descarregar o editor (unmount)
-  //   - Ao renomear via menu (handleMenuRename)
-  // Nunca roda no autosave, evitando scan do vault a cada tecla.
-  //
-  // Se o novo título colide com outra nota existente, aborta e reverte o título
-  // local, mostrando toast de erro.
-
-  async function commitTituloSePrecisar(notaId) {
-    if (!notaId || !vaultPath) return
-    const committed = committedTitulosRef.current.get(notaId)
-    if (!committed) return
-
-    // Busca a versão mais atual do título (do ref síncrono ou do estado)
-    const atual = notaAtivaRef.current?.id === notaId
-      ? notaAtivaRef.current
-      : (notas.find(n => n.id === notaId) || null)
-    if (!atual || !atual.titulo) return
-    if (committed === atual.titulo) return
-
-    // Colisão: outra nota (id diferente) já tem esse título?
-    const keyNovo = atual.titulo.normalize('NFC').toLowerCase()
-    const existente = vaultIndexRef.current.get(keyNovo)
-    if (existente && existente.id !== notaId) {
-      window.dispatchEvent(new CustomEvent('paraverso:toast', {
-        detail: { tipo: 'erro', mensagem: `Já existe uma nota chamada "${atual.titulo}". Escolha outro título.` }
-      }))
-      // Reverte título local pro committed
-      atualizarNotaAtiva({ titulo: committed })
-      return
-    }
-
-    // Propaga nos wikilinks do vault
-    try {
-      const updated = await propagarRename(vaultPath, committed, atual.titulo)
-      committedTitulosRef.current.set(notaId, atual.titulo)
-      if (updated && updated.length > 0) {
-        window.dispatchEvent(new CustomEvent('paraverso:toast', {
-          detail: { tipo: 'info', mensagem: `Rename: ${updated.length} nota(s) atualizada(s)` }
-        }))
-      }
-    } catch (err) {
-      console.warn('[commitTituloSePrecisar] propagação falhou:', err?.message)
-    }
-  }
-
-  // ── Ações do menu ··· ────────────────────────────────────────────────────────
-
-  async function handleMenuRename(novoTitulo) {
-    if (!notaAtiva || !vaultPath || novoTitulo === notaAtiva.titulo) return
-
-    // Colisão: outra nota já tem esse título?
-    const keyNovo = novoTitulo.normalize('NFC').toLowerCase()
-    const existente = vaultIndexRef.current.get(keyNovo)
-    if (existente && existente.id !== notaAtiva.id) {
-      window.dispatchEvent(new CustomEvent('paraverso:toast', {
-        detail: { tipo: 'erro', mensagem: `Já existe uma nota chamada "${novoTitulo}". Escolha outro título.` }
-      }))
-      return
-    }
-
-    const tituloAntigo = notaAtiva.titulo
-    const oldFilename = notaAtiva._filename || notaAtiva.titulo || ''
-    const novoFilename = (novoTitulo || 'sem-titulo').replace(/[/\\:*?"<>|]/g, '-').trim() || 'sem-titulo'
-    const caderno = notaAtiva.caderno || ''
-    const subpasta = notaAtiva.subpasta
-
-    // Constrói paths — caderno vazio = nota na raiz do vault
-    const baseParts = caderno ? [caderno] : []
-    if (subpasta) baseParts.push(subpasta)
-    const oldPath = await window.electron.joinPath(vaultPath, ...baseParts, oldFilename + '.md')
-    const newPath = await window.electron.joinPath(vaultPath, ...baseParts, novoFilename + '.md')
-
-    try {
-      // Renomeia arquivo no disco
-      if (oldPath !== newPath) {
-        await window.electron.rename(oldPath, newPath)
-      }
-      // Atualiza estado com novo título e filename
-      atualizarNotaAtiva({ titulo: novoTitulo, _filename: novoFilename })
-      foiEditadaRef.current = true
-
-      // Propaga rename nos wikilinks do vault ANTES de recarregar listas
-      try {
-        const updated = await propagarRename(vaultPath, tituloAntigo, novoTitulo)
-        if (updated && updated.length > 0) {
-          window.dispatchEvent(new CustomEvent('paraverso:toast', {
-            detail: { tipo: 'info', mensagem: `Rename: ${updated.length} nota(s) atualizada(s)` }
-          }))
-        }
-      } catch (e) {
-        console.warn('[handleMenuRename] propagação falhou:', e?.message)
-      }
-      // Atualiza o committed title pra não propagar de novo no próximo navigate
-      committedTitulosRef.current.set(notaAtiva.id, novoTitulo)
-
-      // Recarrega lista e índice
-      if (cadernoAtivo) {
-        const lista = await getNotasPorCaderno(cadernoAtivo)
-        setNotas(lista)
-      } else {
-        await carregarNotasRaiz()
-      }
-      invalidateIndex()
-      console.debug('[handleMenuRename] renomeado:', oldFilename, '→', novoFilename)
-    } catch (err) {
-      console.error('[handleMenuRename] erro:', err)
-      window.dispatchEvent(new CustomEvent('paraverso:toast', {
-        detail: { tipo: 'erro', mensagem: `Falha ao renomear: ${err?.message || err}` }
-      }))
-    }
-  }
-
-  async function handleMenuMove(novoCaderno) {
-    if (!notaAtiva) return
-    await handleMoverNota(notaAtiva, novoCaderno)
-  }
-
-  async function handleMenuDelete() {
-    if (!notaAtiva) return
-    await deletar(notaAtiva.id)
-  }
-
-  async function handleMenuOpenExternal() {
-    if (!notaAtiva || !vaultPath) return
-    const filename = notaAtiva._filename || notaAtiva.titulo || ''
-    const caderno = notaAtiva.caderno || ''
-    const filePath = await window.electron.joinPath(vaultPath, caderno, filename + '.md')
-    window.electron.openPath(filePath)
-  }
-
-  // ── Wikilink click — O(1) via vault index ────────────────────────────────────
-  //
-  // Fluxo Obsidian-style:
-  //   1. Extrai título (ignora alias após |)
-  //   2. Lookup no índice em memória
-  //   3. Se não encontrado, reconstrói índice e tenta de novo
-  //   4. Carrega caderno da nota encontrada, navega
-  //   5. Se não existe → cria nova nota com esse título
-
-  async function handleWikiLinkClick(tituloRaw) {
-    const titulo = tituloRaw.split('|')[0].trim()
-    const key    = titulo.normalize('NFC').toLowerCase()
-
-    // 1. Salva nota atual de forma não-fatal
-    if (notaAtiva && saveTimer.current) {
-      clearTimeout(saveTimer.current)
-      try { await salvarNota(notaAtiva) } catch (err) {
-        console.warn('[Wikilink] Falha ao salvar nota atual:', err?.message)
-      }
-      saveTimer.current = null
-    }
-
-    // 2. Tenta índice em memória
-    let meta = vaultIndexRef.current.get(key)
-
-    // 3. Índice vazio ou stale → reconstrói
-    if (!meta) {
-      const freshIndex = await buildVaultIndex()
-      meta = freshIndex.get(key)
-    }
-
-    if (meta) {
-      const targetCaderno = meta.caderno || cadernoAtivo
-
-      // 4a. Carrega a lista do caderno alvo (pode ser diferente do atual)
-      let lista = notas
-      if (targetCaderno !== cadernoAtivo) {
-        lista = await getNotasPorCaderno(targetCaderno)
-        setNotas(lista)
-      }
-
-      // 4b. Encontra a nota completa na lista (com conteúdo)
-      const fnNorm = meta._filename?.normalize('NFC').toLowerCase()
-      let completa = lista.find(n =>
-        n._filename?.normalize('NFC').toLowerCase() === fnNorm || n.id === meta.id
-      )
-
-      // 4c. Fallback: recarrega caderno (nota pode não estar carregada ainda)
-      if (!completa) {
-        const lista2 = await getNotasPorCaderno(targetCaderno)
-        setNotas(lista2)
-        completa = lista2.find(n =>
-          n._filename?.normalize('NFC').toLowerCase() === fnNorm || n.id === meta.id
-        )
-      }
-
-      if (completa) {
-        console.log(`[Wikilink] ✓ "${titulo}" → "${completa.titulo}" (${targetCaderno})`)
-        navigarPara(completa, targetCaderno)
-        return
-      }
-
-      console.warn(`[Wikilink] ✗ Metadata encontrada no índice mas nota não carregada: "${titulo}"`)
-    } else {
-      console.warn(`[Wikilink] ✗ "${titulo}" não encontrada no índice (${vaultIndexRef.current.size} entradas)`)
-    }
-
-    // 5. Não existe → cria nova nota com esse título
-    // Flush save pendente antes de criar nova nota
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current)
-      saveTimer.current = null
-      try { await salvarNota(notaAtivaRef.current) } catch {}
-    }
-    await novaNota(titulo)
-  }
-
-  // ── Templates (Cmd+T) ────────────────────────────────────────────────────────
+  }, [activeNote?.id, activeNote?.titulo, activeNote?._filename]) // eslint-disable-line
+
+  // ── Wikilinks (provided by useWikilinks hook) ──────────────────────────────
+  const { handleWikilinkClick } = useWikilinks({
+    activeNote,
+    activeNotebook,
+    activeNoteRef,
+    vaultIndexRef,
+    buildVaultIndex,
+    saveTimer,
+    setNotes,
+    navigateTo,
+    createNote,
+    notes,
+  })
+
+  // ── Templates (Cmd+T) ──────────────────────────────────────────────────────
 
   useEffect(() => {
     function onKey(e) {
       if ((e.metaKey || e.ctrlKey) && e.key === 't') {
         e.preventDefault()
-        if (notaAtiva) setShowTemplates(true)
+        if (activeNote) setShowTemplates(true)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [notaAtiva])
+  }, [activeNote])
 
-  function inserirTemplate(markdownPuro) {
+  function insertTemplate(rawMarkdown) {
     if (!editorRef.current) return
-    editorRef.current.insertMarkdown(markdownPuro)
-    foiEditadaRef.current = true
+    editorRef.current.insertMarkdown(rawMarkdown)
+    wasEditedRef.current = true
     setShowTemplates(false)
   }
 
-  // ── Journal entry (nota diária) ───────────────────────────────────────────────
+  // ── Daily note (provided by useDailyNote hook) ──────────────────────────────
+  const { createDailyNote } = useDailyNote({
+    activeNotebook,
+    notebooks,
+    vaultIndexRef,
+    buildVaultIndex,
+    invalidateIndex,
+    navigateTo,
+    updateTab,
+    setNotes,
+    loadRootNotes: actions.loadRootNotes,
+  })
 
-  async function criarNotaDiaria() {
-    const now   = new Date()
-    const dia   = now.getDate()
-    const mes   = MESES_PT_LOWER[now.getMonth()]
-    const ano   = now.getFullYear()
-    const diaSem = DIAS_SEMANA[now.getDay()]
-    const titulo = `${dia} ${mes} ${ano}`
-
-    // Caderno destino: config journalCaderno (pode ser "Arquivo/Codex" nested).
-    // Se vazio, nota vai pra raiz do vault (sem fallback pra caderno ativo).
-    const journalConfig = (await window.electron?.getConfig('journalCaderno')) || ''
-    const { caderno: journalCad, subpasta: journalSub } = splitCadernoPath(journalConfig)
-    const cadernoDestino = journalCad || ''
-
-    // Verifica se a nota do dia já existe
-    const key = titulo.normalize('NFC').toLowerCase()
-    let meta = vaultIndexRef.current.get(key)
-    if (!meta) {
-      const fresh = await buildVaultIndex()
-      meta = fresh.get(key)
-    }
-
-    if (meta) {
-      // Nota do dia já existe → navega para ela
-      const targetCaderno = meta.caderno || cadernoDestino
-      if (targetCaderno !== cadernoAtivo) {
-        mutarTab(() => ({ caderno: targetCaderno }))
-      }
-      const lista = await getNotasPorCaderno(targetCaderno)
-      setNotas(lista)
-      const fnNorm = meta._filename?.normalize('NFC').toLowerCase()
-      const completa = lista.find(n =>
-        n._filename?.normalize('NFC').toLowerCase() === fnNorm || n.id === meta.id
-      )
-      if (completa) {
-        navigarPara(completa, targetCaderno)
-        return
-      }
-    }
-
-    // Nota não existe → cria nova com título da data e header de diário
-    if (cadernoDestino !== cadernoAtivo) {
-      mutarTab(() => ({ caderno: cadernoDestino }))
-    }
-    const nota = criarNotaVazia(cadernoDestino)
-    if (journalSub) nota.subpasta = journalSub
-    nota.titulo = titulo
-    // Conteúdo inicial: header com dia da semana
-    nota.conteudo = {
-      type: 'doc',
-      content: [
-        { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: `${diaSem}, ${dia} de ${mes} de ${ano}` }] },
-        { type: 'paragraph' },
-      ],
-    }
-    await salvarNota(nota)
-    invalidateIndex()
-    if (cadernoDestino) {
-      const lista = await getNotasPorCaderno(cadernoDestino)
-      setNotas(lista)
-    } else {
-      // Root-level note — refresh the root notes list so sidebar updates
-      await carregarNotasRaiz()
-    }
-    navigarPara(nota, cadernoDestino)
-  }
-
-  // ── Global events ────────────────────────────────────────────────────────────
+  // ── Global events ──────────────────────────────────────────────────────────
 
   // paraverso:vault-changed (Month Tab patched a daily note externally)
-  // If the currently open note was changed, reload it from disk.
   useEffect(() => {
     async function handleVaultChanged(e) {
       invalidateIndex()
-
       const changedPath = e.detail?.filePath
-      const nota = notaAtivaRef.current
+      const nota = activeNoteRef.current
       if (!changedPath || !nota?._filename) return
-
-      // Don't interrupt the user if they're editing
-      if (foiEditadaRef.current) return
-
-      // Check if the changed file matches the active note
+      if (wasEditedRef.current) return
       const notaFile = nota._filename + '.md'
       if (!changedPath.endsWith(notaFile)) return
-
-      // Re-read the note from its notebook and reload the editor
       const caderno = nota.caderno || ''
       const lista = await getNotasPorCaderno(caderno)
       const fresh = lista.find(n => n._filename === nota._filename || n.id === nota.id)
       if (fresh) {
-        notaAtivaRef.current = fresh
-        foiEditadaRef.current = false
+        activeNoteRef.current = fresh
+        wasEditedRef.current = false
         setNavKey(k => k + 1)
-        mutarTab(() => ({ nota: fresh }))
+        updateNoteInTab(fresh)
       }
     }
     window.addEventListener('paraverso:vault-changed', handleVaultChanged)
     return () => window.removeEventListener('paraverso:vault-changed', handleVaultChanged)
   }, [])
 
-  // paraverso:journal (botão ou atalho)
-  useEffect(() => {
-    window.addEventListener('paraverso:journal', criarNotaDiaria)
-    return () => window.removeEventListener('paraverso:journal', criarNotaDiaria)
-  }, [cadernoAtivo, cadernos]) // eslint-disable-line
-
   // paraverso:nova-nota (Cmd+N)
   useEffect(() => {
-    async function handleNovaNota() {
+    async function handleNewNote() {
       const defaultConfig = (await window.electron?.getConfig('defaultCaderno')) || ''
       const { caderno: defaultCad, subpasta: defaultSub } = splitCadernoPath(defaultConfig)
-      const cadernoDestino  = defaultCad || cadernoAtivo || cadernos[0]?.nome || ''
-      if (cadernoDestino && cadernoDestino !== cadernoAtivo) {
-        mutarTab(() => ({ caderno: cadernoDestino }))
+      const targetNotebook = defaultCad || activeNotebook || notebooks[0]?.nome || ''
+      if (targetNotebook && targetNotebook !== activeNotebook) {
+        updateTab(() => ({ caderno: targetNotebook }))
       }
-      await novaNota(undefined, cadernoDestino, defaultSub)
+      await createNote(undefined, targetNotebook, defaultSub)
     }
-    window.addEventListener('paraverso:nova-nota', handleNovaNota)
-    return () => window.removeEventListener('paraverso:nova-nota', handleNovaNota)
-  }, [cadernoAtivo, cadernos]) // eslint-disable-line
+    window.addEventListener('paraverso:nova-nota', handleNewNote)
+    return () => window.removeEventListener('paraverso:nova-nota', handleNewNote)
+  }, [activeNotebook, notebooks]) // eslint-disable-line
 
-  // paraverso:criar-nota (criação de nota a partir de outros módulos)
+  // paraverso:criar-nota (create note from other modules)
   useEffect(() => {
-    async function handleCriarNota(e) {
-      const { titulo, caderno: cadernoAlvo, subpasta } = e.detail
-      // Verifica no índice se já existe
+    async function handleCreateNote(e) {
+      const { titulo, caderno: targetCad, subpasta } = e.detail
       const key = titulo.normalize('NFC').toLowerCase()
       let meta = vaultIndexRef.current.get(key)
       if (!meta) {
         const fresh = await buildVaultIndex()
         meta = fresh.get(key)
       }
-      if (meta) return // já existe
+      if (meta) return
 
-      const cadernoDestino = cadernoAlvo || cadernoAtivo
-      const notaNova = criarNotaVazia(cadernoDestino)
-      notaNova.titulo = titulo
-      if (subpasta) notaNova.subpasta = subpasta
-      await salvarNota(notaNova)
+      const targetNotebook = targetCad || activeNotebook
+      const nota = criarNotaVazia(targetNotebook)
+      nota.titulo = titulo
+      if (subpasta) nota.subpasta = subpasta
+      await salvarNota(nota)
       invalidateIndex()
 
-      if (cadernoDestino === cadernoAtivo) {
-        const lista = await getNotasPorCaderno(cadernoAtivo)
-        setNotas(lista)
+      if (targetNotebook === activeNotebook) {
+        const lista = await getNotasPorCaderno(activeNotebook)
+        setNotes(lista)
       }
     }
-    window.addEventListener('paraverso:criar-nota', handleCriarNota)
-    return () => window.removeEventListener('paraverso:criar-nota', handleCriarNota)
-  }, [cadernoAtivo]) // eslint-disable-line
+    window.addEventListener('paraverso:criar-nota', handleCreateNote)
+    return () => window.removeEventListener('paraverso:criar-nota', handleCreateNote)
+  }, [activeNotebook]) // eslint-disable-line
 
-  // ── Nota pendente (QuickSwitcher) ─────────────────────────────────────────
-  //
-  // QuickSwitcher passa metadata-only (sem conteudo).
-  // QuickSwitcher passa nota completa.
-  // Aqui garantimos que o conteúdo seja carregado antes de navegar.
+  // ── Pending note (QuickSwitcher) ───────────────────────────────────────────
 
   useEffect(() => {
     if (!notaPendente) return
     let cancelled = false
 
-    async function abrirNota() {
+    async function openNote() {
       let nota = notaPendente
 
-      // ── Criar nota nova (QuickSwitcher: _criar: true) ──────────────────────
       if (nota._criar && nota.titulo) {
         if (cancelled) return
-        // Verifica no índice se já existe — se sim, navega; se não, cria
         const key = nota.titulo.normalize('NFC').toLowerCase()
         let meta = vaultIndexRef.current.get(key)
         if (!meta) {
@@ -1280,84 +264,80 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
           meta = fresh.get(key)
         }
         if (meta) {
-          // Nota já existe → navega para ela
-          const targetCaderno = meta.caderno || cadernoAtivo
-          const lista = await getNotasPorCaderno(targetCaderno)
-          if (!cancelled) setNotas(lista)
+          const targetNotebook = meta.caderno || activeNotebook
+          const lista = await getNotasPorCaderno(targetNotebook)
+          if (!cancelled) setNotes(lista)
           const fnNorm = meta._filename?.normalize('NFC').toLowerCase()
-          const completa = lista.find(n =>
+          const complete = lista.find(n =>
             n._filename?.normalize('NFC').toLowerCase() === fnNorm || n.id === meta.id
           )
-          if (!cancelled && completa) {
-            navigarPara(completa, targetCaderno)
+          if (!cancelled && complete) {
+            navigateTo(complete, targetNotebook)
             onNotaAberta?.()
           }
         } else {
-          // Nota não existe → cria nova
           if (!cancelled) {
-            await novaNota(nota.titulo)
+            await createNote(nota.titulo)
             onNotaAberta?.()
           }
         }
         return
       }
 
-      // ── Abrir nota existente (QuickSwitcher / link normal) ─────────────────
       if (!nota.conteudo) {
-        // Nota sem conteúdo (QuickSwitcher) — carrega do caderno
         try {
-          const targetCaderno = nota.caderno || cadernoAtivo
-          const lista = await getNotasPorCaderno(targetCaderno)
-          if (!cancelled) setNotas(lista)
-          const completa = lista.find(n =>
+          const targetNotebook = nota.caderno || activeNotebook
+          const lista = await getNotasPorCaderno(targetNotebook)
+          if (!cancelled) setNotes(lista)
+          const complete = lista.find(n =>
             n._filename === nota._filename || n.id === nota.id
           )
-          if (completa) nota = completa
-        } catch { /* continua com metadata-only se falhar */ }
+          if (complete) nota = complete
+        } catch { /* continue with metadata-only */ }
       }
 
       if (!cancelled) {
-        navigarPara(nota, nota.caderno || cadernoAtivo)
+        navigateTo(nota, nota.caderno || activeNotebook)
         onNotaAberta?.()
       }
     }
 
-    abrirNota()
+    openNote()
     return () => { cancelled = true }
   }, [notaPendente]) // eslint-disable-line
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex-1 flex overflow-hidden bg-bg dark:bg-bg-dark">
 
       {showTemplates && (
         <TemplateModal
-          onInsert={inserirTemplate}
+          onInsert={insertTemplate}
           onClose={() => setShowTemplates(false)}
-          titulo={notaAtiva?.titulo}
+          titulo={activeNote?.titulo}
         />
       )}
 
       {/* Sidebar */}
       <NotesSidebar
-        cadernos={cadernos}
-        notas={notas}
-        notasRaiz={notasRaiz}
-        caderno={cadernoAtivo}
-        setCaderno={c => mutarTab(() => ({ caderno: c, nota: null }))}
-        notaSelecionada={notaAtiva}
-        setNotaSelecionada={trocarNota}
-        onNovaNota={() => novaNota(undefined, cadernoAtivo || '')}
-        onNovaNotaRaiz={() => novaNota(undefined, '')}
-        onNovoCaderno={novoCaderno}
-        onDeletarCaderno={deletarCaderno}
-        onDeletarNota={deletar}
-        onMoverNota={handleMoverNota}
-        onMoverCaderno={handleMoverCaderno}
+        cadernos={notebooks}
+        notas={notes}
+        notasRaiz={rootNotes}
+        caderno={activeNotebook}
+        setCaderno={c => updateTab(() => ({ caderno: c, nota: null }))}
+        notaSelecionada={activeNote}
+        setNotaSelecionada={switchNote}
+        onNovaNota={() => createNote(undefined, activeNotebook || '')}
+        onNovaNotaRaiz={() => createNote(undefined, '')}
+        onNovoCaderno={createNotebook}
+        onDeletarCaderno={deleteNotebook}
+        onDeletarNota={deleteNote}
+        onMoverNota={handleMoveNote}
+        onMoverCaderno={handleMoveNotebook}
         onFolderAction={handleFolderAction}
-        notasPorCaderno={notasPorCaderno}
-        onCarregarCaderno={carregarCaderno}
+        notasPorCaderno={notesByNotebook}
+        onCarregarCaderno={loadNotebookNotes}
         width={sidebarWidth}
         collapsed={sidebarCollapsed}
         toggleCollapsed={toggleSidebar}
@@ -1365,36 +345,16 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
         vaultPath={vaultPath}
       />
 
-      {/* Modais de ações de pasta (renomear, nova pasta, mover, apagar) */}
-      {folderModal?.type === 'input' && (
-        <InputModal
-          title={folderModal.title}
-          placeholder={folderModal.placeholder}
-          defaultValue={folderModal.defaultValue}
-          onConfirm={folderModal.onConfirm}
-          onCancel={() => setFolderModal(null)}
-        />
-      )}
-      {folderModal?.type === 'confirm' && (
-        <ConfirmModal
-          message={folderModal.message}
-          confirmLabel={folderModal.confirmLabel}
-          onConfirm={folderModal.onConfirm}
-          onCancel={() => setFolderModal(null)}
-        />
-      )}
-      {folderModal?.type === 'picker' && (
-        <FolderPicker
-          cadernos={cadernos}
-          excludePath={folderModal.folderPath}
-          onConfirm={folderModal.onConfirm}
-          onCancel={() => setFolderModal(null)}
-        />
-      )}
+      {/* Folder action modals */}
+      <NotasModals
+        folderModal={folderModal}
+        setFolderModal={setFolderModal}
+        cadernos={notebooks}
+      />
 
       {/* Main area */}
       <div className="flex-1 flex flex-col overflow-hidden bg-bg dark:bg-bg-dark">
-        {/* Barra de navegação — transparente, flutuando sobre o editor */}
+        {/* Nav bar */}
         <div
           className="flex items-center px-3 relative shrink-0"
           style={{ height: window.electron ? '48px' : '36px', paddingTop: window.electron ? '12px' : '0', WebkitAppRegion: 'drag' }}
@@ -1417,12 +377,12 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
             >&#8250;</button>
           </div>
 
-          {/* Breadcrumb — centralizado */}
-          {notaAtiva && (
+          {/* Breadcrumb */}
+          {activeNote && (
             <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none' }}>
               <span style={{ fontSize: '11px', color: '#4a4a4a', userSelect: 'none' }}>
-                {notaAtiva.caderno && <>{notaAtiva.caderno}{notaAtiva.subpasta ? ` / ${notaAtiva.subpasta}` : ''}  /  </>}
-                {notaAtiva.titulo}
+                {activeNote.caderno && <>{activeNote.caderno}{activeNote.subpasta ? ` / ${activeNote.subpasta}` : ''}  /  </>}
+                {activeNote.titulo}
               </span>
             </div>
           )}
@@ -1439,8 +399,8 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
               </span>
             )}
             <NoteActionsMenu
-              nota={notaAtiva}
-              cadernos={cadernos}
+              nota={activeNote}
+              cadernos={notebooks}
               vaultPath={vaultPath}
               onRename={handleMenuRename}
               onMove={handleMenuMove}
@@ -1473,22 +433,22 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
         </div>
 
         {/* Editor + Outline */}
-        {notaAtiva ? (
+        {activeNote ? (
           <div className="flex-1 flex min-w-0 overflow-hidden">
             <NoteEditorCM
               key={navKey}
-              nota={notaAtiva}
+              nota={activeNote}
               textura={textura}
               editorRef={editorRef}
               cmViewRef={cmViewRef}
               backlinks={backlinks}
               getSuggestions={getSuggestions}
-              onTituloChange={titulo => atualizarNotaAtiva({ titulo })}
+              onTituloChange={titulo => updateActiveNote({ titulo })}
               onConteudoChange={markdown => {
-                foiEditadaRef.current = true
-                atualizarNotaAtiva({ _rawMarkdown: markdown, conteudo: null })
+                wasEditedRef.current = true
+                updateActiveNote({ _rawMarkdown: markdown, conteudo: null })
               }}
-              onWikiLinkClick={handleWikiLinkClick}
+              onWikiLinkClick={handleWikilinkClick}
             />
             <OutlinePanel cmViewRef={cmViewRef} isOpen={outlineOpen} />
           </div>
@@ -1497,13 +457,13 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
             <p className="text-ink-3 dark:text-ink-dark3 text-sm">Nenhuma nota selecionada</p>
             <div className="flex gap-2">
               <button
-                onClick={() => novaNota()}
+                onClick={() => createNote()}
                 className="text-sm text-accent dark:text-accent-dark border border-accent/30 dark:border-accent-dark/30 rounded-lg px-4 py-2 hover:bg-accent/5 dark:hover:bg-accent-dark/5 transition-colors"
               >
                 + Nova nota
               </button>
               <button
-                onClick={criarNotaDiaria}
+                onClick={createDailyNote}
                 className="text-sm text-accent dark:text-accent-dark border border-accent/30 dark:border-accent-dark/30 rounded-lg px-4 py-2 hover:bg-accent/5 dark:hover:bg-accent-dark/5 transition-colors flex items-center gap-1.5"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
