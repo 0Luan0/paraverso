@@ -96,11 +96,14 @@ export async function saveNote(vaultPath, nota) {
 
 // ── Move ─────────────────────────────────────────────────────────────────────
 
-export async function moveNote(vaultPath, nota, novoCaderno) {
-  console.log('[moverNotaVault] chamado:', { vaultPath, id: nota?.id, titulo: nota?.titulo, _filename: nota?._filename, caderno: nota?.caderno, subpasta: nota?.subpasta, novoCaderno })
+export async function moveNote(vaultPath, nota, novoCaderno, novaSubpasta) {
+  console.log('[moverNotaVault] chamado:', { id: nota?.id, titulo: nota?.titulo, de: nota?.caderno, subDe: nota?.subpasta, para: novoCaderno, subPara: novaSubpasta })
   const cadernoAtual = sanitizeName(nota.caderno || '')
   const cadernoNovo  = sanitizeName(novoCaderno || '')
-  if (cadernoAtual === cadernoNovo) return nota
+  const subNova = novaSubpasta || undefined
+
+  // Skip if already in the exact same location
+  if (cadernoAtual === cadernoNovo && (nota.subpasta || undefined) === subNova) return nota
 
   const filename = nota._filename || sanitizeName(nota.titulo || 'sem-titulo')
 
@@ -108,7 +111,9 @@ export async function moveNote(vaultPath, nota, novoCaderno) {
     ? await el().joinPath(vaultPath, cadernoAtual, nota.subpasta, filename + '.md')
     : await el().joinPath(vaultPath, cadernoAtual, filename + '.md')
 
-  const newDir  = await el().joinPath(vaultPath, cadernoNovo)
+  const newDir = subNova
+    ? await el().joinPath(vaultPath, cadernoNovo, subNova)
+    : await el().joinPath(vaultPath, cadernoNovo)
   const newPath = await el().joinPath(newDir, filename + '.md')
 
   try {
@@ -119,7 +124,18 @@ export async function moveNote(vaultPath, nota, novoCaderno) {
     }
 
     const raw = await el().readFile(oldPath)
-    const updated = raw.replace(/^caderno:.*$/m, `caderno: ${yamlStr(novoCaderno)}`)
+    let updated = raw.replace(/^caderno:.*$/m, `caderno: ${yamlStr(novoCaderno)}`)
+    // Update or add subpasta field in frontmatter
+    if (subNova) {
+      if (/^subpasta:.*$/m.test(updated)) {
+        updated = updated.replace(/^subpasta:.*$/m, `subpasta: ${yamlStr(subNova)}`)
+      } else {
+        updated = updated.replace(/^caderno:.*$/m, `caderno: ${yamlStr(novoCaderno)}\nsubpasta: ${yamlStr(subNova)}`)
+      }
+    } else if (/^subpasta:.*$/m.test(updated)) {
+      // Remove subpasta field if moving to caderno root
+      updated = updated.replace(/^subpasta:.*\n?/m, '')
+    }
 
     await el().writeFile(newPath, updated)
 
@@ -131,7 +147,7 @@ export async function moveNote(vaultPath, nota, novoCaderno) {
     await el().deleteFile(oldPath)
 
     console.debug('[moverNotaVault] movido:', oldPath, '→', newPath)
-    return { ...nota, caderno: novoCaderno, subpasta: undefined }
+    return { ...nota, caderno: novoCaderno, subpasta: subNova }
   } catch (err) {
     console.error('[moverNotaVault] erro ao mover nota:', err)
     throw err

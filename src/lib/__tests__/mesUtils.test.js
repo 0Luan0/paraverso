@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { mesId, criarMesVazio, NOMES_MES } from '../mesUtils'
+import {
+  mesId, criarMesVazio, NOMES_MES, MESES_PT_LOWER, DIAS_SEMANA,
+  dailyNoteTitle, monthFolderName, monthConfigTitle, resumoNoteTitle
+} from '../mesUtils'
 
 describe('mesId', () => {
   it('pads single-digit months', () => {
@@ -58,5 +61,47 @@ describe('NOMES_MES', () => {
   it('starts with Janeiro and ends with Dezembro', () => {
     expect(NOMES_MES[0]).toBe('Janeiro')
     expect(NOMES_MES[11]).toBe('Dezembro')
+  })
+})
+
+describe('MESES_PT_LOWER', () => {
+  it('has 12 months in lowercase', () => {
+    expect(MESES_PT_LOWER).toHaveLength(12)
+    expect(MESES_PT_LOWER[0]).toBe('janeiro')
+    expect(MESES_PT_LOWER[3]).toBe('abril')
+  })
+})
+
+describe('DIAS_SEMANA', () => {
+  it('has 7 days starting with Domingo', () => {
+    expect(DIAS_SEMANA).toHaveLength(7)
+    expect(DIAS_SEMANA[0]).toBe('Domingo')
+    expect(DIAS_SEMANA[6]).toBe('Sábado')
+  })
+})
+
+describe('dailyNoteTitle', () => {
+  it('formats as "dia mês ano"', () => {
+    expect(dailyNoteTitle(2026, 4, 6)).toBe('6 abril 2026')
+    expect(dailyNoteTitle(2026, 1, 15)).toBe('15 janeiro 2026')
+  })
+})
+
+describe('monthFolderName', () => {
+  it('returns YYYY-MM format', () => {
+    expect(monthFolderName(2026, 4)).toBe('2026-04')
+    expect(monthFolderName(2026, 12)).toBe('2026-12')
+  })
+})
+
+describe('monthConfigTitle', () => {
+  it('returns "Month Year"', () => {
+    expect(monthConfigTitle(2026, 4)).toBe('Abril 2026')
+  })
+})
+
+describe('resumoNoteTitle', () => {
+  it('returns "Resumo Month Year"', () => {
+    expect(resumoNoteTitle(2026, 4)).toBe('Resumo Abril 2026')
   })
 })

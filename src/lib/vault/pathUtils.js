@@ -87,7 +87,7 @@ async function _getAllMdPathsFallback(vaultPath) {
   try {
     const rootFiles = (await el().readdir(vaultPath)) || []
     for (const f of rootFiles) {
-      if (f.endsWith('.md')) paths.push(await el().joinPath(vaultPath, f))
+      if (f.endsWith('.md') && !f.startsWith('_')) paths.push(await el().joinPath(vaultPath, f))
     }
   } catch { /* ignore */ }
 
@@ -97,7 +97,7 @@ async function _getAllMdPathsFallback(vaultPath) {
 
     const files = (await el().readdir(dirPath)) || []
     for (const f of files) {
-      if (f.endsWith('.md')) paths.push(await el().joinPath(dirPath, f))
+      if (f.endsWith('.md') && !f.startsWith('_')) paths.push(await el().joinPath(dirPath, f))
     }
 
     const subDirs = await el().readdir(dirPath, { dirsOnly: true }).catch(() => [])
@@ -106,7 +106,7 @@ async function _getAllMdPathsFallback(vaultPath) {
       const subPath = await el().joinPath(dirPath, sub)
       const subFiles = (await el().readdir(subPath)) || []
       for (const f of subFiles) {
-        if (f.endsWith('.md')) paths.push(await el().joinPath(subPath, f))
+        if (f.endsWith('.md') && !f.startsWith('_')) paths.push(await el().joinPath(subPath, f))
       }
     }
   }
@@ -128,7 +128,11 @@ export async function _getAllMdPaths(vaultPath) {
 
   return allPaths.filter(p => {
     const topDir = _topDir(p, vaultPath)
-    return !RESERVED_DIRS.has(topDir)
+    if (RESERVED_DIRS.has(topDir)) return false
+    // Skip underscore-prefixed files (system/config files like _config.md)
+    const filename = p.split(/[/\\]/).pop()
+    if (filename.startsWith('_')) return false
+    return true
   })
 }
 

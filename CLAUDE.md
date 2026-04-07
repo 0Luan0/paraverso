@@ -53,22 +53,23 @@ src/
 
 ## Critical rules
 
-1. **DO NOT modify the Month Tab** (`src/components/mes/`)
-2. **DO NOT remove `_machine` from `RESERVED_DIRS`** in vaultFs.js
+1. **Month Tab** — IO layer uses file-based architecture: daily notes in `meses/{YYYY-MM}/`, categories as shared folders in `meses/`, month config in `meses/{YYYY-MM}/{Month}.md`
+2. **`_machine` is a normal folder for CRUD** — notes inside it save, delete, and move like any other. `MACHINE_DIRS` in `shared.js` controls visual-only separation (sidebar, graph). Do NOT add `_machine` back to `RESERVED_DIRS`.
 3. **DO NOT use `file://` for attachments** — use protocol `attachment://`
 4. **DO NOT replace vault index** with `getTodasNotas()`
 5. **DO NOT use `invalidateIndex()` with `new Map()`**
+6. **DO NOT duplicate existing functions** — if a function already exists for a behavior (e.g., deleting a note, saving, moving), reuse it instead of creating a new one. Search the codebase first. This applies to UI handlers too: if a button needs the same behavior as another, call the same function.
 
 ## Vault hemispheres
 
 The vault has two hemispheres with distinct access rules:
 
-| Hemisphere | Folder | AI access | Visible in sidebar |
+| Hemisphere | Folder | AI access | Visual style |
 |---|---|---|---|
-| Human | everything except `_machine/` | no | yes |
-| Machine | `_machine/` | full | no |
+| Human | everything except `_machine/` | no | default colors |
+| Machine | `_machine/` | full | purple (#9d8ff5) |
 
-To include `_machine` notes where needed, use the merge pattern (see rule `machine-hemisphere.md`).
+Both hemispheres use the same note pipeline (save, delete, move, index). The only difference is visual: purple in sidebar/graph and a separate collapsible section. `_machine` is excluded from `getNotebooks()` so it doesn't appear as a regular caderno.
 
 ## Critical modules (most depended upon)
 1. **`db/index.js`** — used by 7 files: VaultContext, NotasTab, GraphTab, ConfigTab, QuickSwitcher, MesTab, MetasMes
@@ -83,7 +84,7 @@ To include `_machine` notes where needed, use the merge pattern (see rule `machi
 
 | Feature | Status |
 |---|---|
-| Month Tab | ✅ DO NOT MODIFY |
+| Month Tab | ✅ File-based architecture (daily notes + category folders) |
 | CodeMirror 6 Editor | ✅ Live preview + dynamic themes |
 | Graph View (d3-force) | ✅ Hemispheres + auto notebook colors |
 | Wikilinks [[note]] | ✅ Click + autocomplete |
@@ -102,6 +103,8 @@ Detailed context loads automatically when working on relevant files:
 - `temas.md` — CSS vars, theme application
 - `ipc-electron.md` — IPC channels, protocol handler, file formats
 - `claude-md-guidelines.md` — rules for keeping CLAUDE.md team-oriented
+- `no-personal-data.md` — no hardcoded paths, usernames, or personal data in code/generated files
+- `clean-code.md` — reuse functions, no duplication, keep code minimal and focused
 
 ## Branches
 - `main` — active development branch

@@ -62,6 +62,31 @@ export async function getTodosMeses() {
   return db.meses.toArray()
 }
 
+/** Save a single day's data (habits + memo) to its daily note. */
+export async function salvarDiaGrid(ano, mes, dia, habitoNames, habitStates, memo) {
+  if (useVaultFs()) return vault.saveDayFromGrid(_vaultPath, ano, mes, dia, habitoNames, habitStates, memo)
+}
+
+/** Month Tab meta/category operations — pass-through to vault. */
+export async function criarCategoria(nome) {
+  if (useVaultFs()) return vault.createCategory(_vaultPath, nome)
+}
+export async function criarMetaItem(categoria, texto) {
+  if (useVaultFs()) return vault.createMetaItem(_vaultPath, categoria, texto)
+}
+export async function toggleMetaItemDb(categoria, itemId, feito) {
+  if (useVaultFs()) return vault.toggleMetaItem(_vaultPath, categoria, itemId, feito)
+}
+export async function deletarMetaItem(categoria, itemId) {
+  if (useVaultFs()) return vault.deleteMetaItem(_vaultPath, categoria, itemId)
+}
+export async function deletarCategoria(nome) {
+  if (useVaultFs()) return vault.deleteCategory(_vaultPath, nome)
+}
+export async function salvarResumo(ano, mes, texto) {
+  if (useVaultFs()) return vault.saveResumoNote(_vaultPath, ano, mes, texto)
+}
+
 // ── NOTAS ─────────────────────────────────────────────────────────────────────
 
 export async function getNota(id) {
@@ -79,9 +104,10 @@ export async function salvarNota(nota) {
   await db.notas.put(nota)
 }
 
-export async function moverNota(nota, novoCaderno) {
-  if (useVaultFs()) return vault.moverNotaVault(_vaultPath, nota, novoCaderno)
+export async function moverNota(nota, novoCaderno, novaSubpasta) {
+  if (useVaultFs()) return vault.moverNotaVault(_vaultPath, nota, novoCaderno, novaSubpasta)
   nota.caderno = novoCaderno
+  nota.subpasta = novaSubpasta || undefined
   await db.notas.put(nota)
   return nota
 }

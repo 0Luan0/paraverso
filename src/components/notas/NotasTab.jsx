@@ -19,6 +19,7 @@ import {
   deletarCaderno, criarSubpasta, resolverPastaAbs,
 } from '../../db/index'
 import { useVault } from '../../contexts/VaultContext'
+import { MESES_PT_LOWER, DIAS_SEMANA } from '../../lib/mesUtils'
 import { NotesSidebar } from './NotesSidebar'
 import { NoteEditorCM } from './NoteEditorCM'
 import { OutlinePanel } from './OutlinePanel'
@@ -112,13 +113,12 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
     if (indexBuilding.current) return vaultIndexRef.current
     indexBuilding.current = true
     try {
-      // getTodasNotasMetadata() já retorna ordenado por editadaEm desc —
-      // ao processar do mais recente para o mais antigo, o mais recente
-      // fica no índice quando há títulos duplicados.
+      // getTodasNotasMetadata() now includes _machine files (no longer in RESERVED_DIRS).
+      // Tag each note with its hemisphere for visual separation in graph/quickswitcher.
       const metadata = await getTodasNotasMetadata()
       const map = new Map()
       for (const nota of metadata) {
-        nota.hemisphere = 'human'
+        nota.hemisphere = nota.caderno === '_machine' ? 'machine' : 'human'
         const titleKey = nota.titulo?.normalize('NFC').toLowerCase()
         const fnKey    = nota._filename?.normalize('NFC').toLowerCase()
         // Título: só indexa se a chave ainda não existe (mais recente tem prioridade)
@@ -126,31 +126,6 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
         // Filename: sempre indexa (filename é único por definição)
         if (fnKey && fnKey !== titleKey) map.set(fnKey, nota)
       }
-
-      // Add machine hemisphere files to the index
-      try {
-        const machineFiles = await window.electron?.machineContext?.listFiles(vaultPath) || []
-        for (const fp of machineFiles) {
-          const filename = fp.split(/[/\\]/).pop().replace(/\.md$/i, '').normalize('NFC')
-          // Relative path from vault root, e.g. _machine/contexts/pessoa
-          const rel = fp.replace(vaultPath, '').replace(/^[/\\]/, '').replace(/\.md$/i, '').normalize('NFC')
-          const key = filename.normalize('NFC').toLowerCase()
-          const relKey = rel.normalize('NFC').toLowerCase()
-          const entry = {
-            id: rel,
-            titulo: filename,
-            caderno: '_machine',
-            tags: [],
-            editadaEm: 0,
-            _filename: filename,
-            _filePath: fp,
-            hemisphere: 'machine',
-            relativePath: rel,
-          }
-          if (!map.has(relKey)) map.set(relKey, entry)
-          if (!map.has(key)) map.set(key, entry)
-        }
-      } catch {}
 
       vaultIndexRef.current = map
       return map
@@ -177,10 +152,11 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
         setNotasPorCaderno({})
         await carregarNotasRaiz()
         await buildVaultIndex()
-        if (cadernoAtivo) {
-          const lista = await getNotasPorCaderno(cadernoAtivo)
-          setNotas(lista)
-        }
+        // Reload active caderno + _machine (machine section reads from notasPorCaderno)
+        const reloads = []
+        if (cadernoAtivo) reloads.push(getNotasPorCaderno(cadernoAtivo).then(lista => setNotas(lista)))
+        reloads.push(getNotasPorCaderno('_machine').then(lista => setNotasPorCaderno(prev => ({ ...prev, _machine: lista }))))
+        await Promise.all(reloads)
       } catch (err) {
         console.warn('[refreshVault on focus] falha:', err?.message)
       }
@@ -471,7 +447,10 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
     try {
       const lista = await getNotasPorCaderno(nome)
       setNotasPorCaderno(prev => ({ ...prev, [nome]: lista }))
-    } catch {}
+    } catch {
+      // On error, set empty array so sidebar shows "Nenhuma nota ainda." instead of "Carregando..."
+      setNotasPorCaderno(prev => ({ ...prev, [nome]: [] }))
+    }
   }
 
   // Atualiza cache quando caderno ativo carrega
@@ -538,9 +517,12 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
     setNotasPorCaderno({})
     // Refresca notas raiz (podem ter sido afetadas)
     await carregarNotasRaiz()
-    // Recarrega lista do caderno ativo (se houver)
-    const lista = cadernoAtivo ? await getNotasPorCaderno(cadernoAtivo) : []
-    if (cadernoAtivo) setNotas(lista)
+    // Reload active caderno + _machine
+    const reloads = []
+    if (cadernoAtivo) reloads.push(getNotasPorCaderno(cadernoAtivo))
+    reloads.push(getNotasPorCaderno('_machine').then(lista => setNotasPorCaderno(prev => ({ ...prev, _machine: lista }))))
+    const [lista] = await Promise.all(reloads)
+    if (cadernoAtivo && lista) setNotas(lista)
 
     if (notaAtiva?.id === id) {
       // Proxima nota: pega do cadernoAtivo, senao da raiz, senao null
@@ -604,17 +586,21 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
 
   // ── Mover nota entre cadernos (drag & drop) ──────────────────────────────────
 
-  async function handleMoverNota(nota, novoCaderno) {
+  async function handleMoverNota(nota, novoCaderno, novaSubpasta) {
     if (!nota) { console.error('[handleMoverNota] nota é undefined'); return }
     if (!novoCaderno) { console.error('[handleMoverNota] novoCaderno é undefined'); return }
-    if (nota.caderno === novoCaderno) { console.debug('[handleMoverNota] mesmo caderno, ignorando'); return }
+    // Skip if already in exact same location
+    if (nota.caderno === novoCaderno && (nota.subpasta || undefined) === (novaSubpasta || undefined)) {
+      console.debug('[handleMoverNota] mesma localização, ignorando')
+      return
+    }
 
     const cadernoOrigem = nota.caderno
-    console.debug('[handleMoverNota] iniciando:', { titulo: nota.titulo, de: cadernoOrigem, para: novoCaderno, _filename: nota._filename, subpasta: nota.subpasta })
+    console.debug('[handleMoverNota] iniciando:', { titulo: nota.titulo, de: cadernoOrigem, subDe: nota.subpasta, para: novoCaderno, subPara: novaSubpasta })
 
     try {
       // 1. Espera o move no filesystem terminar completamente
-      await moverNota(nota, novoCaderno)
+      await moverNota(nota, novoCaderno, novaSubpasta)
 
       // 2. Remove da lista ativa (se estiver nela)
       setNotas(prev => prev.filter(n => n.id !== nota.id))
@@ -692,6 +678,9 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
       invalidateIndex()
       await buildVaultIndex()
 
+      // Reload _machine notes (cache was wiped)
+      getNotasPorCaderno('_machine').then(lista => setNotasPorCaderno(prev => ({ ...prev, _machine: lista })))
+
       // Se o caderno top-level ativo sumiu (virou subpasta), ativa o primeiro disponível
       const topAtivo = cadernoAtivo?.split('/')[0]
       const topFrom  = sourceRelPath.split('/')[0]
@@ -722,10 +711,11 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
     await carregarNotasRaiz()
     invalidateIndex()
     await buildVaultIndex()
-    if (cadernoAtivo) {
-      const lista = await getNotasPorCaderno(cadernoAtivo)
-      setNotas(lista)
-    }
+    // Reload active caderno + _machine (machine section reads from notasPorCaderno)
+    const reloads = []
+    if (cadernoAtivo) reloads.push(getNotasPorCaderno(cadernoAtivo).then(lista => setNotas(lista)))
+    reloads.push(getNotasPorCaderno('_machine').then(lista => setNotasPorCaderno(prev => ({ ...prev, _machine: lista }))))
+    await Promise.all(reloads)
     return novos
   }
 
@@ -1029,33 +1019,6 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
     const titulo = tituloRaw.split('|')[0].trim()
     const key    = titulo.normalize('NFC').toLowerCase()
 
-    // Machine hemisphere link — same mechanism as MachineFileItem.onClick
-    if (titulo.startsWith('_machine/')) {
-      try {
-        const filePath = await window.electron.joinPath(vaultPath, titulo + '.md')
-        const content = await window.electron.readFile(filePath)
-        if (content) {
-          const name = titulo.split('/').pop()
-          const rel = titulo.replace(/^_machine\//, '')
-          trocarNota({
-            id: 'machine:' + rel,
-            titulo: name,
-            caderno: '_machine',
-            tags: [],
-            _rawMarkdown: content,
-            conteudo: null,
-            criadaEm: 0,
-            editadaEm: 0,
-            _filename: name,
-            _machinePath: filePath,
-          })
-        }
-        return
-      } catch (err) {
-        console.warn('[Wikilink] Erro ao abrir arquivo da máquina:', err?.message)
-      }
-    }
-
     // 1. Salva nota atual de forma não-fatal
     if (notaAtiva && saveTimer.current) {
       clearTimeout(saveTimer.current)
@@ -1142,22 +1105,19 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
 
   // ── Journal entry (nota diária) ───────────────────────────────────────────────
 
-  const MESES_PT = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro']
-  const DIAS_PT  = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado']
-
   async function criarNotaDiaria() {
     const now   = new Date()
     const dia   = now.getDate()
-    const mes   = MESES_PT[now.getMonth()]
+    const mes   = MESES_PT_LOWER[now.getMonth()]
     const ano   = now.getFullYear()
-    const diaSem = DIAS_PT[now.getDay()]
+    const diaSem = DIAS_SEMANA[now.getDay()]
     const titulo = `${dia} ${mes} ${ano}`
 
-    // Caderno destino: config journalCaderno (pode ser "Arquivo/Codex" nested) →
-    // caderno ativo → primeiro caderno. splitCadernoPath quebra em top-level + subpasta.
+    // Caderno destino: config journalCaderno (pode ser "Arquivo/Codex" nested).
+    // Se vazio, nota vai pra raiz do vault (sem fallback pra caderno ativo).
     const journalConfig = (await window.electron?.getConfig('journalCaderno')) || ''
     const { caderno: journalCad, subpasta: journalSub } = splitCadernoPath(journalConfig)
-    const cadernoDestino = journalCad || cadernoAtivo || cadernos[0]?.nome || ''
+    const cadernoDestino = journalCad || ''
 
     // Verifica se a nota do dia já existe
     const key = titulo.normalize('NFC').toLowerCase()
@@ -1205,11 +1165,46 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
     if (cadernoDestino) {
       const lista = await getNotasPorCaderno(cadernoDestino)
       setNotas(lista)
+    } else {
+      // Root-level note — refresh the root notes list so sidebar updates
+      await carregarNotasRaiz()
     }
     navigarPara(nota, cadernoDestino)
   }
 
   // ── Global events ────────────────────────────────────────────────────────────
+
+  // paraverso:vault-changed (Month Tab patched a daily note externally)
+  // If the currently open note was changed, reload it from disk.
+  useEffect(() => {
+    async function handleVaultChanged(e) {
+      invalidateIndex()
+
+      const changedPath = e.detail?.filePath
+      const nota = notaAtivaRef.current
+      if (!changedPath || !nota?._filename) return
+
+      // Don't interrupt the user if they're editing
+      if (foiEditadaRef.current) return
+
+      // Check if the changed file matches the active note
+      const notaFile = nota._filename + '.md'
+      if (!changedPath.endsWith(notaFile)) return
+
+      // Re-read the note from its notebook and reload the editor
+      const caderno = nota.caderno || ''
+      const lista = await getNotasPorCaderno(caderno)
+      const fresh = lista.find(n => n._filename === nota._filename || n.id === nota.id)
+      if (fresh) {
+        notaAtivaRef.current = fresh
+        foiEditadaRef.current = false
+        setNavKey(k => k + 1)
+        mutarTab(() => ({ nota: fresh }))
+      }
+    }
+    window.addEventListener('paraverso:vault-changed', handleVaultChanged)
+    return () => window.removeEventListener('paraverso:vault-changed', handleVaultChanged)
+  }, [])
 
   // paraverso:journal (botão ou atalho)
   useEffect(() => {

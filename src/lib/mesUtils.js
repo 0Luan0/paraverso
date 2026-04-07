@@ -8,8 +8,37 @@ export const NOMES_MES = [
   'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'
 ]
 
+// Lowercase month names used for daily note titles (e.g., "6 abril 2026")
+export const MESES_PT_LOWER = [
+  'janeiro','fevereiro','março','abril','maio','junho',
+  'julho','agosto','setembro','outubro','novembro','dezembro'
+]
+
+// Full weekday names (Sunday = index 0)
+export const DIAS_SEMANA = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado']
+
 export function mesId(ano, mes) {
   return `${ano}-${String(mes).padStart(2, '0')}`
+}
+
+/** Daily note title: "6 abril 2026" — matches criarNotaDiaria() format. */
+export function dailyNoteTitle(ano, mes, dia) {
+  return `${dia} ${MESES_PT_LOWER[mes - 1]} ${ano}`
+}
+
+/** Month subfolder name: "2026-04" */
+export function monthFolderName(ano, mes) {
+  return mesId(ano, mes)
+}
+
+/** Month config note title: "Abril 2026" */
+export function monthConfigTitle(ano, mes) {
+  return `${NOMES_MES[mes - 1]} ${ano}`
+}
+
+/** Resumo note title: "Resumo Abril 2026" */
+export function resumoNoteTitle(ano, mes) {
+  return `Resumo ${NOMES_MES[mes - 1]} ${ano}`
 }
 
 export function criarMesVazio(ano, mes) {

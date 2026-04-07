@@ -1,77 +1,92 @@
 import { useState } from 'react'
-import { splitCadernoPath } from '../../db/index'
+import {
+  criarCategoria, criarMetaItem, toggleMetaItemDb,
+  deletarMetaItem, deletarCategoria
+} from '../../db/index'
 
 export function MetasMes({ mesObj, onUpdate }) {
   const [novaCategoria, setNovaCategoria] = useState('')
   const [addingCat, setAddingCat] = useState(false)
   const [novoItem, setNovoItem] = useState({})
 
-  function toggleItem(catId, itemIdx) {
-    const metas = mesObj.metas.map(cat => {
-      if (cat.id !== catId) return cat
-      const itens = cat.itens.map((item, i) =>
-        i === itemIdx ? { ...item, feito: !item.feito } : item
+  async function toggleItem(catId, itemIdx) {
+    const cat = mesObj.metas.find(c => c.id === catId)
+    if (!cat) return
+    const item = cat.itens[itemIdx]
+    if (!item) return
+
+    // Optimistic UI update
+    const metas = mesObj.metas.map(c => {
+      if (c.id !== catId) return c
+      const itens = c.itens.map((it, i) =>
+        i === itemIdx ? { ...it, feito: !it.feito } : it
       )
-      return { ...cat, itens }
+      return { ...c, itens }
     })
     onUpdate({ ...mesObj, metas })
+
+    // Persist to note file
+    await toggleMetaItemDb(cat.categoria, item.id, !item.feito)
   }
 
   async function adicionarItem(catId) {
     const texto = (novoItem[catId] || '').trim()
     if (!texto) return
 
-    // Descobre o nome da categoria para usar como caderno
     const cat = mesObj.metas.find(c => c.id === catId)
-    const categoriaNome = cat?.categoria || ''
+    if (!cat) return
 
+    // Create note in category folder
+    const id = await criarMetaItem(cat.categoria, texto)
+
+    // Optimistic UI update
     const metas = mesObj.metas.map(c => {
       if (c.id !== catId) return c
-      return { ...c, itens: [...c.itens, { id: crypto.randomUUID(), texto, feito: false }] }
+      return { ...c, itens: [...c.itens, { id: id || crypto.randomUUID(), texto, feito: false }] }
     })
     onUpdate({ ...mesObj, metas })
     setNovoItem(prev => ({ ...prev, [catId]: '' }))
-
-    // Dispara criação automática de nota — NotasTab ouve este evento
-    // Se journalCaderno estiver configurado, categoria vira subpasta dele.
-    // Suporta journalCaderno nested (ex: "Arquivo/Codex") após folder moves:
-    //   journalCaderno="Codex"          categoria="Leituras" → Codex/Leituras
-    //   journalCaderno="Arquivo/Codex"  categoria="Leituras" → Arquivo/Codex/Leituras
-    const journalCaderno = await window.electron?.getConfig('journalCaderno')
-    if (!journalCaderno) {
-      console.warn('[MetasMes] journalCaderno não configurado. Categoria virará pasta na raiz. Configure em Config → Notas diárias.')
-    }
-    let detail
-    if (journalCaderno) {
-      const { caderno: journalCad, subpasta: journalSub } = splitCadernoPath(journalCaderno)
-      const subpastaFinal = journalSub ? `${journalSub}/${categoriaNome}` : categoriaNome
-      detail = { titulo: texto, caderno: journalCad, subpasta: subpastaFinal }
-    } else {
-      detail = { titulo: texto, caderno: categoriaNome }
-    }
-
-    window.dispatchEvent(new CustomEvent('paraverso:criar-nota', { detail }))
   }
 
-  function deletarItem(catId, itemIdx) {
-    const metas = mesObj.metas.map(cat => {
-      if (cat.id !== catId) return cat
-      return { ...cat, itens: cat.itens.filter((_, i) => i !== itemIdx) }
+  async function deletarItem(catId, itemIdx) {
+    const cat = mesObj.metas.find(c => c.id === catId)
+    if (!cat) return
+    const item = cat.itens[itemIdx]
+    if (!item) return
+
+    // Delete note file
+    await deletarMetaItem(cat.categoria, item.id)
+
+    // Optimistic UI update
+    const metas = mesObj.metas.map(c => {
+      if (c.id !== catId) return c
+      return { ...c, itens: c.itens.filter((_, i) => i !== itemIdx) }
     })
     onUpdate({ ...mesObj, metas })
   }
 
-  function adicionarCategoria() {
+  async function adicionarCategoriaFn() {
     const nome = novaCategoria.trim()
     if (!nome) return
-    const nova = { id: crypto.randomUUID(), categoria: nome, itens: [] }
+
+    // Create folder in meses/
+    await criarCategoria(nome)
+
+    // Update month config
+    const nova = { id: nome.toLowerCase(), categoria: nome, itens: [] }
     onUpdate({ ...mesObj, metas: [...mesObj.metas, nova] })
     setNovaCategoria('')
     setAddingCat(false)
   }
 
-  function deletarCategoria(catId) {
+  async function deletarCategoriaFn(catId) {
     if (!confirm('Remover esta categoria e todas as suas metas?')) return
+
+    const cat = mesObj.metas.find(c => c.id === catId)
+    if (cat) {
+      await deletarCategoria(cat.categoria)
+    }
+
     onUpdate({ ...mesObj, metas: mesObj.metas.filter(c => c.id !== catId) })
   }
 
@@ -99,7 +114,7 @@ export function MetasMes({ mesObj, onUpdate }) {
               <div className="flex items-center gap-2">
                 <span className="text-xs text-ink-3 dark:text-ink-dark3">{feitos}/{cat.itens.length}</span>
                 <button
-                  onClick={() => deletarCategoria(cat.id)}
+                  onClick={() => deletarCategoriaFn(cat.id)}
                   className="text-xs text-ink-3 dark:text-ink-dark3 hover:text-red-500 transition-colors"
                   title="Remover categoria"
                 >
@@ -164,14 +179,14 @@ export function MetasMes({ mesObj, onUpdate }) {
             value={novaCategoria}
             onChange={e => setNovaCategoria(e.target.value)}
             onKeyDown={e => {
-              if (e.key === 'Enter') adicionarCategoria()
+              if (e.key === 'Enter') adicionarCategoriaFn()
               if (e.key === 'Escape') setAddingCat(false)
             }}
             placeholder="Nome da categoria..."
             className="flex-1 text-xs bg-bg-2 dark:bg-bg-dark2 border border-bdr dark:border-bdr-dark rounded px-2 py-1.5 text-ink dark:text-ink-dark placeholder-ink-3 dark:placeholder-ink-dark3 focus:outline-none focus:border-accent dark:focus:border-accent-dark"
           />
           <button
-            onClick={adicionarCategoria}
+            onClick={adicionarCategoriaFn}
             className="text-xs bg-accent dark:bg-accent-dark text-white rounded px-2 py-1.5"
           >
             OK

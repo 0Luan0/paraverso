@@ -137,17 +137,18 @@ function _parseBlocksTipTap(lines) {
       continue
     }
 
-    // Task list: - [ ] or - [x]  (leading spaces ignored)
-    if (/^- \[[ xX]\] /.test(trimmed)) {
+    // Task list: - [ ] or - [x] or - [-]  (leading spaces ignored)
+    if (/^- \[[ xX\-]\] /.test(trimmed)) {
       const items = []
       while (i < lines.length) {
         const t = lines[i].trimStart()
-        if (!/^- \[[ xX]\] /.test(t)) break
+        if (!/^- \[[ xX\-]\] /.test(t)) break
         const checked = /^- \[[xX]\] /.test(t)
-        const text = t.replace(/^- \[[ xX]\] /, '')
+        const notdone = /^- \[-\] /.test(t)
+        const text = t.replace(/^- \[[ xX\-]\] /, '')
         items.push({
           type: 'taskItem',
-          attrs: { checked },
+          attrs: { checked, notdone },
           content: [{ type: 'paragraph', content: _parseInlineTipTap(text) }],
         })
         i++
@@ -282,8 +283,8 @@ function _nodeToMd(node) {
       return (node.content || []).map((item, i) => _listItemToMd(item, `${i + 1}. `)).join('') + '\n'
     case 'taskList':
       return (node.content || []).map(item => {
-        const checked = item.attrs?.checked ? '[x]' : '[ ]'
-        return _listItemToMd(item, `- ${checked} `)
+        const mark = item.attrs?.checked ? '[x]' : item.attrs?.notdone ? '[-]' : '[ ]'
+        return _listItemToMd(item, `- ${mark} `)
       }).join('') + '\n'
     case 'blockquote': {
       const inner = (node.content || []).map(n => _nodeToMd(n)).join('')

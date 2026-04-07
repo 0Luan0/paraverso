@@ -373,23 +373,8 @@ function registerIpcHandlers() {
         await fsp.writeFile(contextoPath, contextoMd, 'utf-8')
       }
 
-      const readmePath = path.join(machinePath, 'README.md')
-      if (!fs.existsSync(readmePath)) {
-        const readmeMd = [
-          '# Hemisfério Máquina',
-          '',
-          'Esta pasta é gerenciada pela IA do Paraverso (Claude no terminal).',
-          'Não edite manualmente a menos que saiba o que está fazendo.',
-          '',
-          'O arquivo mais importante aqui é **contexts/contexto.md** — é onde a IA',
-          'armazena o que sabe sobre você. Quanto mais você usa o Claude dentro do',
-          'vault, mais rico fica esse contexto, e melhor ficam as respostas.',
-          '',
-          'Veja **Como usar Claude.md** (na raiz de _machine/) pra começar.',
-          '',
-        ].join('\n')
-        await fsp.writeFile(readmePath, readmeMd, 'utf-8')
-      }
+      // README.md removed — it was recreated every startup after user deleted it.
+      // The onboarding note "Como usar Claude" at vault root covers this content.
 
       return { created: !existed, path: machinePath }
     } catch (err) {

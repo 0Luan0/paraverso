@@ -1,10 +1,14 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 export default function MachineToast({ filename, type, onClose }) {
+  // Stabilize onClose ref so the 4s timer doesn't reset on every render
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
   useEffect(() => {
-    const timer = setTimeout(onClose, 4000)
+    const timer = setTimeout(() => onCloseRef.current(), 4000)
     return () => clearTimeout(timer)
-  }, [onClose])
+  }, [])
 
   const label = type === 'rename' ? 'criou' : 'atualizou'
 

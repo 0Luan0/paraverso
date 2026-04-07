@@ -94,7 +94,8 @@ function SubpastaTreeNode({
   nome, node, cadernoPai, pathPrefix,
   expandedSubpastas, toggleSubpasta,
   notaSelecionada, onSelect, onDelete, formatarData,
-  onMoverCaderno, onContextMenu,
+  onMoverCaderno, onMoverNota, onContextMenu,
+  notas, notasPorCaderno, notasRaiz,
 }) {
   const [dragOver, setDragOver] = useState(false)
   const fullSub = pathPrefix ? `${pathPrefix}/${nome}` : nome
@@ -123,12 +124,24 @@ function SubpastaTreeNode({
         setDragOver(false)
         const folderPath = e.dataTransfer.getData('folderPath')
         if (folderPath && onMoverCaderno) {
-          // Self/cycle guards são aplicados no handler do NotasTab
           onMoverCaderno(folderPath, caminhoCompleto)
           return
         }
-        // Drop de nota em subpasta: escopo dessa feature não inclui isso
-        // (drop de nota continua caindo no caderno pai via bubbling)
+        // Drop de nota em subpasta
+        const notaId = e.dataTransfer.getData('notaId')
+        if (!notaId || !onMoverNota) return
+        let nota = notas?.find(n => n.id === notaId)
+        if (!nota) {
+          for (const cads of Object.values(notasPorCaderno ?? {})) {
+            nota = cads.find(n => n.id === notaId)
+            if (nota) break
+          }
+        }
+        if (!nota) nota = notasRaiz?.find(n => n.id === notaId)
+        if (!nota) return
+        // Don't move if already in this exact subfolder
+        if (nota.caderno === cadernoPai && nota.subpasta === fullSub) return
+        onMoverNota(nota, cadernoPai, fullSub)
       }}
     >
       <button
@@ -180,7 +193,11 @@ function SubpastaTreeNode({
                 onDelete={onDelete}
                 formatarData={formatarData}
                 onMoverCaderno={onMoverCaderno}
+                onMoverNota={onMoverNota}
                 onContextMenu={onContextMenu}
+                notas={notas}
+                notasPorCaderno={notasPorCaderno}
+                notasRaiz={notasRaiz}
               />
             ))}
         </div>
@@ -222,57 +239,41 @@ function HemisphereHeader({ label, color, count, collapsed, onToggle }) {
   )
 }
 
-function MachineFileItem({ filePath, vaultPath, badge, onSelect }) {
-  // Extract display name from absolute path
-  const rel = filePath.replace(vaultPath, '').replace(/^[/\\]_machine[/\\]/, '')
-  const name = rel.split(/[/\\]/).pop().replace(/\.md$/i, '')
-
+// Purple-styled NoteItem for machine hemisphere — same functionality as NoteItem
+// but with purple accent colors to visually distinguish the AI section.
+function MachineNoteItem({ nota, selecionada, onSelect, onDelete, formatarData, compact = false }) {
   return (
     <div
-      className="flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer hover:bg-[#1a1628] transition-colors"
-      onClick={async () => {
-        try {
-          const content = await window.electron?.readFile(filePath)
-          if (!content) return
-          // Create a nota-like object compatible with the editor
-          const nota = {
-            id: 'machine:' + rel,
-            titulo: name,
-            caderno: '_machine',
-            tags: [],
-            _rawMarkdown: content,
-            conteudo: null,
-            criadaEm: 0,
-            editadaEm: 0,
-            _filename: name,
-            _machinePath: filePath,
-          }
-          if (onSelect) onSelect(nota)
-        } catch {}
+      draggable
+      onDragStart={e => {
+        e.dataTransfer.setData('notaId', nota.id)
+        e.dataTransfer.setData('notaCaderno', nota.caderno || '')
+        e.dataTransfer.effectAllowed = 'move'
+        e.currentTarget.style.opacity = '0.4'
       }}
+      onDragEnd={e => { e.currentTarget.style.opacity = '1' }}
+      className={`group relative flex items-center gap-1.5 ${compact ? 'px-2 py-0.5' : 'px-2 py-1.5'} rounded-md cursor-grab transition-colors ${
+        selecionada
+          ? 'bg-[#9d8ff5]/10'
+          : 'hover:bg-[#1a1628]'
+      }`}
+      onClick={() => onSelect(nota)}
     >
-      <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#9d8ff5', flexShrink: 0, opacity: 0.6 }} />
-      <span style={{ fontSize: 12, color: '#9d8ff5', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {name}
-      </span>
-      {badge && (
-        <span style={{
-          fontSize: 9,
-          fontWeight: 600,
-          letterSpacing: '.05em',
-          textTransform: 'uppercase',
-          color: badge === 'ctx' ? '#7c6fbd' : '#6b5fa8',
-          background: '#1e1a2e',
-          borderRadius: 4,
-          padding: '1px 4px',
-          flexShrink: 0,
-        }}>
-          {badge}
-        </span>
-      )}
+      <span className={`${compact ? 'w-0.5 h-0.5' : 'w-1 h-1'} rounded-full flex-shrink-0 opacity-60`} style={{ background: '#9d8ff5' }} />
+      <div className="flex-1 min-w-0">
+        <div className={`${compact ? 'text-xs' : 'text-sm'} truncate`} style={{ color: '#9d8ff5' }}>{nota.titulo || 'Sem título'}</div>
+        {!compact && nota.editadaEm > 0 && (
+          <div className="text-xs text-ink-3 dark:text-ink-dark3">{formatarData(nota.editadaEm)}</div>
+        )}
+      </div>
+      <button
+        onClick={e => { e.stopPropagation(); onDelete(nota.id) }}
+        className="absolute right-1 top-1 opacity-0 group-hover:opacity-100 text-ink-3 dark:text-ink-dark3 hover:text-red-500 transition-all text-xs flex-shrink-0"
+      >✕</button>
     </div>
   )
 }
+
 
 export function NotesSidebar({
   cadernos,
@@ -330,33 +331,23 @@ export function NotesSidebar({
   // Hemisphere collapse state (persisted)
   const [humanCollapsed, setHumanCollapsed] = useState(() => localStorage.getItem('paraverso-human-collapsed') === 'true')
   const [machineCollapsed, setMachineCollapsed] = useState(() => localStorage.getItem('paraverso-machine-collapsed') === 'true')
-  const [machineFiles, setMachineFiles] = useState([])
 
   const toggleHuman = () => setHumanCollapsed(prev => { localStorage.setItem('paraverso-human-collapsed', String(!prev)); return !prev })
   const toggleMachine = () => setMachineCollapsed(prev => { localStorage.setItem('paraverso-machine-collapsed', String(!prev)); return !prev })
 
-  // Load machine files
+  // Load _machine notes through the normal pipeline when section is expanded
+  const machineLoaded = useRef(false)
   useEffect(() => {
-    if (!vaultPath) return
-    window.electron?.machineContext?.listFiles(vaultPath).then(files => setMachineFiles(files || [])).catch(() => {})
-  }, [vaultPath])
-
-  // Listen for machine file changes to refresh the list
-  useEffect(() => {
-    const refresh = () => {
-      if (vaultPath) {
-        window.electron?.machineContext?.listFiles(vaultPath).then(files => setMachineFiles(files || [])).catch(() => {})
-      }
+    if (!machineCollapsed && !machineLoaded.current && onCarregarCaderno) {
+      onCarregarCaderno('_machine')
+      machineLoaded.current = true
     }
-    window.electron?.machineContext?.onFileChanged(refresh)
-    return () => { window.electron?.machineContext?.offFileChanged() }
-  }, [vaultPath])
+  }, [machineCollapsed, onCarregarCaderno])
+  // Reload when vault changes
+  useEffect(() => { machineLoaded.current = false }, [vaultPath])
 
-  const getBadge = (filePath) => {
-    if (filePath.includes('/contexts/') || filePath.includes('\\contexts\\')) return 'ctx'
-    if (filePath.includes('/templates/') || filePath.includes('\\templates\\')) return 'tpl'
-    return null
-  }
+  // Machine notes from the normal pipeline
+  const machineNotas = notasPorCaderno['_machine'] || []
 
   // Busca inline
   const [buscaAberta, setBuscaAberta] = useState(false)
@@ -757,7 +748,11 @@ export function NotesSidebar({
                         onDelete={onDeletarNota}
                         formatarData={formatarData}
                         onMoverCaderno={onMoverCaderno}
+                        onMoverNota={onMoverNota}
                         onContextMenu={abrirFolderMenu}
+                        notas={notas}
+                        notasPorCaderno={notasPorCaderno}
+                        notasRaiz={notasRaiz}
                       />
                     ))}
                 </div>
@@ -808,29 +803,60 @@ export function NotesSidebar({
         <HemisphereHeader
           label="Máquina"
           color={MACHINE_COLOR}
-          count={machineFiles.length}
+          count={machineNotas.length}
           collapsed={machineCollapsed}
           onToggle={toggleMachine}
         />
 
-        {!machineCollapsed && (
-          <div className="mt-1 space-y-0.5">
-            {machineFiles.length === 0 && (
-              <p className="text-xs px-3 py-2 text-center" style={{ color: '#555' }}>
-                Nenhum arquivo da IA ainda.
-              </p>
-            )}
-            {machineFiles.map(fp => (
-              <MachineFileItem
-                key={fp}
-                filePath={fp}
-                vaultPath={vaultPath || ''}
-                badge={getBadge(fp)}
-                onSelect={setNotaSelecionada}
-              />
-            ))}
-          </div>
-        )}
+        {!machineCollapsed && (() => {
+          const tree = buildSubpastaTree(machineNotas)
+          return (
+            <div className="mt-1 space-y-0.5">
+              {machineNotas.length === 0 && (
+                <p className="text-xs px-3 py-2 text-center" style={{ color: '#555' }}>
+                  Nenhum arquivo da IA ainda.
+                </p>
+              )}
+
+              {/* Notes at _machine root */}
+              {tree.notas.map(n => (
+                <MachineNoteItem
+                  key={n.id}
+                  nota={n}
+                  selecionada={notaSelecionada?.id === n.id}
+                  onSelect={setNotaSelecionada}
+                  onDelete={onDeletarNota}
+                  formatarData={formatarData}
+                />
+              ))}
+
+              {/* Subfolders inside _machine (contexts, etc.) */}
+              {[...tree.children.entries()]
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([nome, node]) => (
+                  <SubpastaTreeNode
+                    key={nome}
+                    nome={nome}
+                    node={node}
+                    cadernoPai="_machine"
+                    pathPrefix=""
+                    expandedSubpastas={expandedSubpastas}
+                    toggleSubpasta={toggleSubpasta}
+                    notaSelecionada={notaSelecionada}
+                    onSelect={setNotaSelecionada}
+                    onDelete={onDeletarNota}
+                    formatarData={formatarData}
+                    onMoverCaderno={onMoverCaderno}
+                    onMoverNota={onMoverNota}
+                    onContextMenu={abrirFolderMenu}
+                    notas={notas}
+                    notasPorCaderno={notasPorCaderno}
+                    notasRaiz={notasRaiz}
+                  />
+                ))}
+            </div>
+          )
+        })()}
 
       </div>
 

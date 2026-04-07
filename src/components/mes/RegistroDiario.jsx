@@ -1,41 +1,71 @@
-import { useState } from 'react'
+import { useState, useRef, useCallback } from 'react'
+import { salvarDiaGrid } from '../../db/index'
 import { DiaModal } from './DiaModal'
 
-// 0=vazio/default (cinza –), 1=feito (verde ✓), 2=não feito (vermelho ✕)
+// 0=vazio (cinza –), 1=feito (verde ✓), 2=não feito (vermelho ✕)
 const HABITO_ESTADOS = {
   0: { label: '–', bg: 'bg-ink-2/30 dark:bg-ink-dark3/30', text: 'text-ink-3 dark:text-ink-dark3' },
   1: { label: '✓', bg: 'bg-green-800/80 dark:bg-green-900', text: 'text-green-300' },
   2: { label: '✕', bg: 'bg-red-800/70 dark:bg-red-900/80', text: 'text-red-300' },
 }
 
-export function RegistroDiario({ mesObj, hoje, onUpdate }) {
+export function RegistroDiario({ mesObj, hoje, setMesObj, onSaveMonth }) {
   const [modalDia, setModalDia] = useState(null)
+  const daySaveTimers = useRef({})
 
   const diasHoje = hoje.getFullYear() === mesObj.ano && hoje.getMonth() + 1 === mesObj.mes
     ? hoje.getDate()
     : null
+
+  // Debounced save for a specific day's data to its daily note file.
+  // Immediate UI update via setMesObj, then async file write after 600ms.
+  const debouncedDaySave = useCallback((diaIdx, newMesObj) => {
+    const dia = newMesObj.dias[diaIdx]
+    const key = dia.n
+
+    clearTimeout(daySaveTimers.current[key])
+    daySaveTimers.current[key] = setTimeout(() => {
+      salvarDiaGrid(
+        newMesObj.ano, newMesObj.mes, dia.n,
+        newMesObj.habitos, dia.habitos, dia.memo
+      )
+    }, 600)
+  }, [])
 
   function ciclarHabito(diaIdx, habitoIdx) {
     const dias = [...mesObj.dias]
     const dia = { ...dias[diaIdx] }
     const atual = (dia.habitos[habitoIdx] ?? 0)
     dia.habitos = [...(dia.habitos || [])]
+
+    // Ensure habitos array has correct length (may be empty for days without notes)
+    while (dia.habitos.length < mesObj.habitos.length) dia.habitos.push(0)
+
     dia.habitos[habitoIdx] = (atual + 1) % 3
     dias[diaIdx] = dia
-    onUpdate({ ...mesObj, dias })
+    const newMesObj = { ...mesObj, dias }
+
+    setMesObj(newMesObj)           // instant UI update
+    debouncedDaySave(diaIdx, newMesObj) // async file write
   }
 
   function salvarMemo(diaIdx, valor) {
     const dias = [...mesObj.dias]
     dias[diaIdx] = { ...dias[diaIdx], memo: valor }
-    onUpdate({ ...mesObj, dias })
+    const newMesObj = { ...mesObj, dias }
+
+    setMesObj(newMesObj)
+    debouncedDaySave(diaIdx, newMesObj)
   }
 
   function salvarNotaDia(n, campos) {
     const diaIdx = n - 1
     const dias = [...mesObj.dias]
     dias[diaIdx] = { ...dias[diaIdx], ...campos }
-    onUpdate({ ...mesObj, dias })
+    const newMesObj = { ...mesObj, dias }
+
+    setMesObj(newMesObj)
+    debouncedDaySave(diaIdx, newMesObj)
   }
 
   function scoreDia(dia) {

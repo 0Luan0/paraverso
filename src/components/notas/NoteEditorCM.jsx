@@ -68,7 +68,7 @@ const baseTheme = EditorView.theme({
   '.cm-tooltip-autocomplete': { background: '#221E16 !important', border: '1px solid #3A3428 !important', borderRadius: '8px !important', boxShadow: '0 8px 24px rgba(0,0,0,0.15) !important', overflow: 'hidden' },
   '.cm-tooltip-autocomplete ul': { maxHeight: '240px' },
   '.cm-tooltip-autocomplete ul li': { padding: '6px 12px !important', fontSize: '13px', color: '#EDE8DF' },
-  '.cm-tooltip-autocomplete ul li[aria-selected]': { background: '#e4e4e4 !important', color: 'white !important' },
+  '.cm-tooltip-autocomplete ul li[aria-selected]': { background: '#3A3428 !important', color: '#EDE8DF !important' },
 })
 
 // ── Fold headings (Obsidian-like) ──────────────────────────────────────────
@@ -191,12 +191,12 @@ function criarWikilinkCompletion(getSuggestionsRef) {
         })
       }
 
-      // Machine notes insert relativePath, human notes insert titulo
-      const linkText = hemisphere === 'machine' ? relPath : titulo
+      // All notes link by title — _machine is just a folder, not special
+      const linkText = titulo
 
       options.push({
         label: titulo,
-        detail: hemisphere === 'machine' ? relPath.replace(titulo, '').replace(/[/\\]$/, '') : '',
+        detail: hemisphere === 'machine' ? '_machine' : '',
         type: hemisphere === 'machine' ? 'class' : 'text',
         boost: hemisphere === 'human' ? 2 : 1,
         apply(view, _completion, from, to) {
@@ -332,7 +332,7 @@ const hrPlugin = ViewPlugin.fromClass(class {
   }
 }, { decorations: v => v.decorations })
 
-// ── Task checkbox widget (3 states: [ ] [x] [/]) ───────────────────────────
+// ── Task checkbox widget (3 states: [ ] empty, [x] done, [-] not done) ──────
 class CheckboxWidget extends WidgetType {
   constructor(state, from, to) { super(); this.state = state; this.from = from; this.to = to }
   toDOM(view) {
@@ -349,11 +349,11 @@ class CheckboxWidget extends WidgetType {
       box.style.border = '1.5px solid #e4e4e4'
       box.style.color = 'white'
       box.textContent = '✓'
-    } else if (this.state === 'partial') {
-      box.style.background = 'rgba(193,122,58,0.25)'
-      box.style.border = '1.5px solid #e4e4e4'
-      box.style.color = '#e4e4e4'
-      box.textContent = '—'
+    } else if (this.state === 'notdone') {
+      box.style.background = 'rgba(220,60,60,0.25)'
+      box.style.border = '1.5px solid rgba(220,60,60,0.6)'
+      box.style.color = '#e05555'
+      box.textContent = '✕'
     } else {
       box.style.background = 'transparent'
       box.style.border = '1.5px solid rgba(128,128,128,0.4)'
@@ -361,7 +361,7 @@ class CheckboxWidget extends WidgetType {
     }
     box.addEventListener('click', e => {
       e.preventDefault()
-      const next = this.state === 'empty' ? '[x]' : this.state === 'done' ? '[/]' : '[ ]'
+      const next = this.state === 'empty' ? '[x]' : this.state === 'done' ? '[-]' : '[ ]'
       view.dispatch({ changes: { from: this.from, to: this.to, insert: next } })
     })
     return box
@@ -377,10 +377,10 @@ const taskPlugin = ViewPlugin.fromClass(class {
     const builder = new RangeSetBuilder()
     for (const { from, to } of view.visibleRanges) {
       const text = view.state.doc.sliceString(from, to)
-      for (const m of text.matchAll(/^- (\[ \]|\[x\]|\[\/\])/gm)) {
+      for (const m of text.matchAll(/^- (\[ \]|\[x\]|\[-\])/gm)) {
         const checkFrom = from + m.index + 2
         const checkTo = checkFrom + m[1].length
-        const state = m[1] === '[x]' ? 'done' : m[1] === '[/]' ? 'partial' : 'empty'
+        const state = m[1] === '[x]' ? 'done' : m[1] === '[-]' ? 'notdone' : 'empty'
         builder.add(checkFrom, checkTo, Decoration.replace({ widget: new CheckboxWidget(state, checkFrom, checkTo) }))
       }
     }

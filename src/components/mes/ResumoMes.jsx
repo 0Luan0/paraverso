@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { NOMES_MES } from '../../lib/mesUtils'
+import { salvarResumo as salvarResumoDb } from '../../db/index'
 
 function ResumoModal({ mesObj, onClose, onSave }) {
   const [texto, setTexto] = useState(mesObj.resumo || '')
@@ -76,6 +77,8 @@ export function ResumoMes({ mesObj, onUpdate }) {
 
   function salvarResumo(texto) {
     onUpdate({ ...mesObj, resumo: texto })
+    // Also persist to the resumo note file
+    salvarResumoDb(mesObj.ano, mesObj.mes, texto)
   }
 
   const preview = mesObj.resumo?.trim()

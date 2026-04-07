@@ -18,7 +18,7 @@ paths:
 - `criarWikilinkCompletion()` — autocomplete `[[`
 - `wikilinkKeymap` — auto-close `[[]]`, backspace inteligente
 - `hrPlugin` — `---` vira `<hr>` widget
-- `taskPlugin` — CheckboxWidget (3 estados: [ ] [x] [/])
+- `taskPlugin` — CheckboxWidget (3 estados: [ ] empty, [x] done ✓, [-] not done ✕)
 - `blockquotePlugin` — borda esquerda accent
 - `imageDecorationPlugin` — `![[nome.png]]` vira `<img>` inline
 - `pdfDecorationPlugin` — `![[arquivo.pdf]]` vira botao clicavel

@@ -204,15 +204,6 @@ Atualize o arquivo _machine/contexts/contexto.md com o resultado completo.
 `
 }
 
-function readmeContent() {
-  return `# Hemisfério Máquina
-
-Esta pasta é gerenciada pela IA do Paraverso.
-Não edite manualmente a menos que saiba o que está fazendo.
-Os arquivos aqui são o "cérebro" da IA — contexto sobre você, templates de resposta.
-`
-}
-
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /**

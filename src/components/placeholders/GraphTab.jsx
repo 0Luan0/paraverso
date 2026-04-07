@@ -5,7 +5,7 @@ import { zoom as d3Zoom, zoomIdentity } from 'd3-zoom'
 import { drag as d3Drag } from 'd3-drag'
 import { getNotasParaGrafo } from '../../db/index'
 import { useVault } from '../../contexts/VaultContext'
-import { mergeGraphNodes, machineNodeColor } from '../../lib/graphHemisphere'
+import { machineNodeColor } from '../../lib/graphHemisphere'
 import { corPorCaderno } from '../../lib/graphColors'
 
 const COR_PADRAO = 'rgb(180,180,180)'
@@ -22,7 +22,7 @@ const DEFAULT_CONFIG = {
   gravity: 0.08,
   showLabels: true,
   colorByCaderno: false,
-  showIsolados: false,
+  showIsolados: true,
 }
 
 // ── Slider reutilizável ──
@@ -297,16 +297,35 @@ export function GraphTab({ dark }) {
   const labelGroupsRef = useRef(null) // groups dos labels (pra tick atualizar transform)
   const labelSelRef = useRef(null)    // text.label (pra effect B atualizar font-size/dy)
   const updateLabelVisibilityRef = useRef(null)
-  // Grupos de cor customizáveis (query-based)
-  const [grupos, setGrupos] = useState(() => {
-    try {
-      const salvo = localStorage.getItem('paraverso-graph-grupos')
-      return salvo ? JSON.parse(salvo) : []
-    } catch { return [] }
-  })
-  // Persistir grupos no localStorage
+  // Grupos de cor customizáveis (query-based) — per-vault via localStorage key
+  const [grupos, setGrupos] = useState([])
+  const gruposKeyRef = useRef('')
+
+  // Load vault-specific groups when vault changes
   useEffect(() => {
-    try { localStorage.setItem('paraverso-graph-grupos', JSON.stringify(grupos)) } catch {}
+    if (!vaultPath) return
+    const key = `paraverso-graph-grupos:${vaultPath}`
+    gruposKeyRef.current = key
+    try {
+      let salvo = localStorage.getItem(key)
+      // Migrate from old global key (pre per-vault) if vault key is empty
+      if (!salvo) {
+        const oldKey = 'paraverso-graph-grupos'
+        const legacy = localStorage.getItem(oldKey)
+        if (legacy) {
+          localStorage.setItem(key, legacy)
+          localStorage.removeItem(oldKey)
+          salvo = legacy
+        }
+      }
+      setGrupos(salvo ? JSON.parse(salvo) : [])
+    } catch { setGrupos([]) }
+  }, [vaultPath])
+
+  // Persist groups to vault-specific localStorage key
+  useEffect(() => {
+    if (!gruposKeyRef.current) return
+    try { localStorage.setItem(gruposKeyRef.current, JSON.stringify(grupos)) } catch {}
   }, [grupos])
 
   // Sincroniza grupos de cor com renames/moves de pasta no vault.
@@ -331,13 +350,14 @@ export function GraphTab({ dark }) {
 
     async function construirGrafo() {
       setLoading(true)
-      const notasHumanas = await getNotasParaGrafo()
+      const rawNotas = await getNotasParaGrafo()
       if (cancelled) return
 
-      // Merge machine hemisphere files
-      let machineFiles = []
-      try { machineFiles = await window.electron?.machineContext?.listFiles(vaultPath) || [] } catch {}
-      const notas = mergeGraphNodes(notasHumanas, machineFiles)
+      // Tag hemisphere — _machine notes are already included by getNotasParaGrafo
+      const notas = rawNotas.map(n => ({
+        ...n,
+        hemisphere: n.caderno === '_machine' ? 'machine' : 'human',
+      }))
 
       if (notas.length === 0) {
         setStats({ notas: 0, arestas: 0 })

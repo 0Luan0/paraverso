@@ -2,17 +2,17 @@
  * vault/folderOps.js — Folder/notebook CRUD, move, delete, rename propagation.
  */
 
-import { el, RESERVED_DIRS, sanitizeName } from './shared.js'
+import { el, RESERVED_DIRS, MACHINE_DIRS, sanitizeName } from './shared.js'
 import { getTemplatesDir } from './shared.js'
 import { _getAllMdPaths } from './pathUtils.js'
 
-const CADERNOS_PADRAO = ['Inbox', 'Diário', 'Arquivo']
+// No default folders — notes live at vault root unless user creates folders
+const CADERNOS_PADRAO = []
 
 export async function getNotebooks(vaultPath) {
   const entries = await el().readdir(vaultPath, { dirsOnly: true })
-  const tplDir = (getTemplatesDir() || 'templates').toLowerCase()
   const existingDirs = (entries || []).filter(e =>
-    !RESERVED_DIRS.has(e) && e.toLowerCase() !== tplDir
+    !RESERVED_DIRS.has(e) && !MACHINE_DIRS.has(e)
   )
 
   if (existingDirs.length === 0) {
@@ -40,8 +40,8 @@ export async function moveNotebook(vaultPath, fromRelPath, toRelPath) {
 
   const fromTop = from.split(/[/\\]/)[0]
   const toTop   = to.split(/[/\\]/)[0]
-  if (RESERVED_DIRS.has(fromTop)) throw new Error(`Pasta reservada não pode ser movida: ${fromTop}`)
-  if (RESERVED_DIRS.has(toTop))   throw new Error(`Destino é pasta reservada: ${toTop}`)
+  if (RESERVED_DIRS.has(fromTop) || MACHINE_DIRS.has(fromTop)) throw new Error(`Pasta reservada não pode ser movida: ${fromTop}`)
+  if (RESERVED_DIRS.has(toTop) || MACHINE_DIRS.has(toTop))   throw new Error(`Destino é pasta reservada: ${toTop}`)
 
   const tplDir = (getTemplatesDir() || 'templates').toLowerCase()
   if (fromTop.toLowerCase() === tplDir) {
@@ -97,7 +97,7 @@ export async function deleteNotebook(vaultPath, relPath) {
   if (!rel) throw new Error('Path vazio')
 
   const topSeg = rel.split(/[/\\]/)[0]
-  if (RESERVED_DIRS.has(topSeg)) {
+  if (RESERVED_DIRS.has(topSeg) || MACHINE_DIRS.has(topSeg)) {
     throw new Error(`Pasta reservada não pode ser deletada: ${topSeg}`)
   }
   const tplDir = (getTemplatesDir() || 'templates').toLowerCase()
@@ -119,6 +119,7 @@ export async function createSubfolder(vaultPath, parentRelPath, nome) {
 
   const parent = (parentRelPath || '').trim().replace(/^[/\\]+|[/\\]+$/g, '')
   const parentTop = parent.split(/[/\\]/)[0]
+  // Allow creating subfolders inside _machine (it's a normal folder for CRUD)
   if (parentTop && RESERVED_DIRS.has(parentTop)) {
     throw new Error(`Pasta reservada: ${parentTop}`)
   }

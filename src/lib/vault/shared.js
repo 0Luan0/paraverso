@@ -5,8 +5,13 @@
 
 export const el = () => window.electron
 
-// Reserved folder names — excluded from cadernos list and general file search.
-export const RESERVED_DIRS = new Set(['meses', '_machine'])
+// Machine hemisphere folders — visually separate in sidebar/graph, but included
+// in all CRUD operations (save, delete, move, search). Not "reserved" anymore.
+export const MACHINE_DIRS = new Set(['_machine'])
+
+// Reserved folder names — excluded from note listing and CRUD.
+// _machine was removed: it's now a normal folder with visual-only separation.
+export const RESERVED_DIRS = new Set()
 
 // Configurable templates directory (default: 'templates'). Updated by ConfigTab.
 let configuredTemplatesDir = 'templates'

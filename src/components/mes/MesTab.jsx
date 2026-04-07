@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { getMes, salvarMes } from '../../db/index'
+import { getMes, salvarMes, salvarDiaGrid } from '../../db/index'
 import { useVault } from '../../contexts/VaultContext'
 import { RegistroDiario } from './RegistroDiario'
 import { MetasMes } from './MetasMes'
@@ -18,12 +18,12 @@ export function MesTab() {
   const [showHabitoSetup, setShowHabitoSetup] = useState(false)
   const saveTimer = useRef(null)
 
-  // Cleanup do timer ao desmontar
+  // Cleanup timers on unmount
   useEffect(() => {
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current) }
   }, [])
 
-  // Re-runs when vault becomes available OR when navigating months
+  // Load month data (re-runs on mount, month nav, or vault change)
   useEffect(() => {
     setLoading(true)
     getMes(anoAtual, mesAtual).then(m => {
@@ -32,8 +32,9 @@ export function MesTab() {
     })
   }, [anoAtual, mesAtual, vaultPath])
 
-  // auto-save com debounce
-  const salvarComDebounce = useCallback((novo) => {
+  // Save month-level config (habitos list, categorias) with debounce.
+  // Day-level saves are handled directly by RegistroDiario via salvarDiaGrid.
+  const salvarConfigDebounce = useCallback((novo) => {
     setMesObj(novo)
     clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
@@ -50,8 +51,9 @@ export function MesTab() {
     setAnoAtual(a)
   }
 
+  // When habits are renamed/reordered, update month config + remap day data.
+  // Daily notes will be updated on next save via RegistroDiario.
   function salvarHabitos(habitos) {
-    // Mapeia por nome para preservar dados ao reordenar/remover/adicionar hábitos
     const habitosAntigos = mesObj.habitos
     const dias = mesObj.dias.map(d => ({
       ...d,
@@ -60,7 +62,7 @@ export function MesTab() {
         return idxAntigo !== -1 ? (d.habitos[idxAntigo] ?? 0) : 0
       })
     }))
-    salvarComDebounce({ ...mesObj, habitos, dias })
+    salvarConfigDebounce({ ...mesObj, habitos, dias })
   }
 
   if (loading) {
@@ -116,20 +118,21 @@ export function MesTab() {
         {/* barra de stats */}
         <StatBar mesObj={mesObj} hoje={hoje} />
 
-        {/* registro diário */}
+        {/* registro diário — handles its own day-level saves */}
         <RegistroDiario
           mesObj={mesObj}
           hoje={hoje}
-          onUpdate={salvarComDebounce}
+          setMesObj={setMesObj}
+          onSaveMonth={salvarConfigDebounce}
         />
       </div>
 
       {/* painel direito */}
       <div className="w-64 flex-shrink-0 border-l border-bdr dark:border-bdr-dark bg-surface dark:bg-surface-dark flex flex-col overflow-hidden">
         <div className="flex-1 overflow-auto px-4 py-4 space-y-6">
-          <MetasMes mesObj={mesObj} onUpdate={salvarComDebounce} />
+          <MetasMes mesObj={mesObj} onUpdate={salvarConfigDebounce} />
           <div className="border-t border-bdr-2 dark:border-bdr-dark2 pt-4">
-            <ResumoMes mesObj={mesObj} onUpdate={salvarComDebounce} />
+            <ResumoMes mesObj={mesObj} onUpdate={salvarConfigDebounce} />
           </div>
         </div>
       </div>

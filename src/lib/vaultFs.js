@@ -70,11 +70,17 @@ export { resolveAbsolutePath as resolverPastaAbsVault } from './vault/folderOps.
 export { propagateRename as propagarRenameVault } from './vault/folderOps.js'
 
 // Monthly data — new English names
-export { getMesPath, getMonth, saveMonth, getAllMonths } from './vault/monthIO.js'
+export { getMesPath, getMonth, saveMonth, getAllMonths, saveDayFromGrid } from './vault/monthIO.js'
 // Backward-compatible aliases
 export { getMonth as getMesVault } from './vault/monthIO.js'
 export { saveMonth as salvarMesVault } from './vault/monthIO.js'
 export { getAllMonths as getTodosMesesVault } from './vault/monthIO.js'
+
+// Month Tab IO — category/meta operations
+export {
+  createCategory, createMetaItem, toggleMetaItem, deleteMetaItem, deleteCategory,
+  saveResumoNote,
+} from './vault/monthIO.js'
 
 // Vault initialization
 export { initVault } from './vault/initVault.js'

@@ -17,39 +17,17 @@ export function QuickSwitcher({ onClose, onAbrirNota, vaultPath }) {
   const listRef   = useRef(null)
   const itemRefs  = useRef([])
 
-  // Load both hemispheres on mount
+  // Load all notes on mount (includes _machine via normal pipeline)
   useEffect(() => {
     async function carregar() {
-      let humanas = []
       try {
         const lista = await getTodasNotasMetadata()
-        humanas = lista.map(n => ({ ...n, hemisphere: 'human' }))
+        const tagged = lista.map(n => ({
+          ...n,
+          hemisphere: n.caderno === '_machine' ? 'machine' : 'human',
+        }))
+        setTodas(tagged.sort((a, b) => (b.editadaEm || 0) - (a.editadaEm || 0)))
       } catch {}
-
-      let maquina = []
-      try {
-        const files = await window.electron?.machineContext?.listFiles(vaultPath) || []
-        maquina = files.map(fp => {
-          const filename = fp.split(/[/\\]/).pop().replace(/\.md$/i, '').normalize('NFC')
-          const rel = fp.replace(vaultPath, '').replace(/^[/\\]/, '').replace(/\.md$/i, '').normalize('NFC')
-          return {
-            id: 'machine:' + rel,
-            titulo: filename,
-            caderno: '_machine',
-            tags: [],
-            editadaEm: 0,
-            _filename: filename,
-            _filePath: fp,
-            hemisphere: 'machine',
-            relativePath: rel,
-          }
-        })
-      } catch {}
-
-      setTodas([
-        ...humanas.sort((a, b) => (b.editadaEm || 0) - (a.editadaEm || 0)),
-        ...maquina,
-      ])
     }
     carregar()
     requestAnimationFrame(() => inputRef.current?.focus())
@@ -166,7 +144,7 @@ export function QuickSwitcher({ onClose, onAbrirNota, vaultPath }) {
                   {/* Badge */}
                   {isMachine ? (
                     <span style={{ fontSize: 10, color: MACHINE_COLOR, background: '#1e1a2e', borderRadius: 4, padding: '1px 6px', flexShrink: 0 }}>
-                      {nota.relativePath?.split('/').slice(0, -1).pop() || 'máquina'}
+                      {nota.subpasta || 'máquina'}
                     </span>
                   ) : (
                     <span className="text-xs text-ink-3 dark:text-ink-dark3 flex-shrink-0 bg-bg-2 dark:bg-bg-dark2 px-2 py-0.5 rounded-full">
