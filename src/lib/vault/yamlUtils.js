@@ -123,11 +123,15 @@ export function serializeNoteYaml(nota) {
   const tags = Array.isArray(nota.tags) && nota.tags.length > 0
     ? '[' + nota.tags.map(t => JSON.stringify(t)).join(', ') + ']'
     : '[]'
+  // Write caderno: as the first folder segment (for human readability + backward compat).
+  // Location is always derived from the file path, not from this field.
+  const folder = nota.folder ?? nota.caderno ?? ''
+  const caderno = folder.split('/')[0] || ''
   return [
     '---',
     `id: ${nota.id}`,
     `titulo: ${yamlStr(nota.titulo || '')}`,
-    `caderno: ${yamlStr(nota.caderno || '')}`,
+    `caderno: ${yamlStr(caderno)}`,
     `tags: ${tags}`,
     `criadaEm: ${nota.criadaEm || Date.now()}`,
     `editadaEm: ${nota.editadaEm || Date.now()}`,

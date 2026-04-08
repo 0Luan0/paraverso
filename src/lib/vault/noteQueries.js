@@ -2,10 +2,10 @@
  * vault/noteQueries.js — Read-only note queries, backlinks, and templates.
  */
 
-import { el, filenameToId } from './shared.js'
+import { el, filenameToId, buildCodeSkipRanges, isInCodeBlock } from './shared.js'
 import { getTemplatesDir } from './shared.js'
 import { parseMdFile } from './yamlUtils.js'
-import { _getAllMdPaths, _topDir, _subpasta } from './pathUtils.js'
+import { _getAllMdPaths, _topDir, _subpasta, _relativeFolder } from './pathUtils.js'
 import { readNote } from './noteIO.js'
 
 // ── Note queries ─────────────────────────────────────────────────────────────
@@ -13,12 +13,18 @@ import { readNote } from './noteIO.js'
 export async function getNotesByNotebook(vaultPath, caderno) {
   const allPaths = await _getAllMdPaths(vaultPath)
   const notas = []
+  const cadernoNorm = caderno.normalize('NFC')
 
   for (const filePath of allPaths) {
-    if (_topDir(filePath, vaultPath) !== caderno.normalize('NFC')) continue
+    // Match notes whose top-level folder equals this caderno
+    if (_topDir(filePath, vaultPath) !== cadernoNorm) continue
     try {
       const nota = await readNote(filePath, caderno)
-      if (nota?.id) notas.push({ ...nota, subpasta: _subpasta(filePath, vaultPath) })
+      if (!nota?.id) continue
+      // Set unified folder path (e.g. "Projetos/Web") and legacy subpasta for sidebar tree
+      const folder = _relativeFolder(filePath, vaultPath)
+      const subpasta = _subpasta(filePath, vaultPath)
+      notas.push({ ...nota, folder, subpasta })
     } catch { /* skip corrupt */ }
   }
   return notas.sort((a, b) => (b.editadaEm || 0) - (a.editadaEm || 0))
@@ -56,7 +62,9 @@ export async function getAllNotes(vaultPath) {
     const caderno = _topDir(filePath, vaultPath)
     try {
       const nota = await readNote(filePath, caderno)
-      if (nota?.id) notas.push(nota)
+      if (!nota?.id) continue
+      const folder = _relativeFolder(filePath, vaultPath)
+      notas.push({ ...nota, folder })
     } catch { /* skip corrupt */ }
   }
   return notas
@@ -67,26 +75,20 @@ export async function getNotesForGraph(vaultPath) {
   const wikilinkRe = /\[\[([^\]\n]+)\]\]/g
 
   const settled = await Promise.allSettled(allPaths.map(async (filePath) => {
+    const folder = _relativeFolder(filePath, vaultPath)
     const caderno = _topDir(filePath, vaultPath)
     const raw = await el().readFile(filePath)
     const { frontmatter, body, format } = parseMdFile(raw)
     const filename = filePath.split(/[/\\]/).pop().replace(/\.md$/i, '').normalize('NFC')
 
     const bodyStr = body || ''
-    const skipRanges = []
-    const fenceRe = /```[\s\S]*?```/g
-    let fm
-    while ((fm = fenceRe.exec(bodyStr)) !== null) skipRanges.push([fm.index, fm.index + fm[0].length])
-    const inlineRe = /`[^`\n]+`/g
-    let im
-    while ((im = inlineRe.exec(bodyStr)) !== null) skipRanges.push([im.index, im.index + im[0].length])
-    const isInSkip = (pos) => skipRanges.some(([s, e]) => pos >= s && pos < e)
+    const skipRanges = buildCodeSkipRanges(bodyStr)
 
     const wikilinks = []
     wikilinkRe.lastIndex = 0
     let m
     while ((m = wikilinkRe.exec(bodyStr)) !== null) {
-      if (isInSkip(m.index)) continue
+      if (isInCodeBlock(m.index, skipRanges)) continue
       wikilinks.push(m[1].split('|')[0].trim().normalize('NFC').toLowerCase())
     }
 
@@ -98,12 +100,11 @@ export async function getNotesForGraph(vaultPath) {
       if (h1) titulo = h1[1].trim().normalize('NFC')
     }
 
-    const subpasta = _subpasta(filePath, vaultPath)
     return {
       id,
       titulo: String(titulo),
+      folder,
       caderno: String(caderno),
-      subpasta: subpasta || null,
       editadaEm: Number(frontmatter?.editadaEm) || 0,
       _filename: filename,
       wikilinks,
@@ -122,6 +123,7 @@ export async function getAllNotesMetadata(vaultPath) {
   const notas = []
 
   for (const filePath of allPaths) {
+    const folder = _relativeFolder(filePath, vaultPath)
     const caderno = _topDir(filePath, vaultPath)
     try {
       const raw = await el().readFile(filePath)
@@ -132,6 +134,7 @@ export async function getAllNotesMetadata(vaultPath) {
         notas.push({
           id:        String(frontmatter.id),
           titulo:    String(frontmatter.titulo || filename),
+          folder,
           caderno:   String(caderno),
           tags:      Array.isArray(frontmatter.tags) ? frontmatter.tags : [],
           editadaEm: Number(frontmatter.editadaEm) || 0,
@@ -144,6 +147,7 @@ export async function getAllNotesMetadata(vaultPath) {
         notas.push({
           id:        filename,
           titulo:    String(titulo),
+          folder,
           caderno:   String(caderno),
           tags:      [],
           editadaEm: 0,
@@ -161,18 +165,27 @@ export async function getBacklinks(vaultPath, titulo) {
   if (!titulo) return []
   const allPaths = await _getAllMdPaths(vaultPath)
   const backlinks = []
-
-  const tituloNorm = titulo.normalize('NFC')
-  const termSimple = `[[${tituloNorm}]]`
-  const termAlias  = `[[${tituloNorm}|`
+  const tituloLower = titulo.normalize('NFC').toLowerCase()
 
   for (const filePath of allPaths) {
     try {
       const raw = await el().readFile(filePath)
       if (!raw.includes('[[')) continue
       const rawNorm = raw.normalize('NFC')
-      if (!rawNorm.includes(termSimple) && !rawNorm.includes(termAlias)) continue
 
+      // Parse all wikilinks, skip code blocks, compare case-insensitive
+      const skipRanges = buildCodeSkipRanges(rawNorm)
+      const wikilinkRe = /\[\[([^\]\n]+)\]\]/g
+      let found = false
+      let m
+      while ((m = wikilinkRe.exec(rawNorm)) !== null) {
+        if (isInCodeBlock(m.index, skipRanges)) continue
+        const target = m[1].split('|')[0].trim().normalize('NFC').toLowerCase()
+        if (target === tituloLower) { found = true; break }
+      }
+      if (!found) continue
+
+      const folder   = _relativeFolder(filePath, vaultPath)
       const caderno  = _topDir(filePath, vaultPath)
       const filename = filePath.split(/[/\\]/).pop().replace(/\.md$/i, '').normalize('NFC')
       const { frontmatter } = parseMdFile(raw)
@@ -181,6 +194,7 @@ export async function getBacklinks(vaultPath, titulo) {
       backlinks.push({
         id:        frontmatter?.id || filename,
         titulo:    notaTitulo,
+        folder,
         caderno,
         _filename: filename,
       })

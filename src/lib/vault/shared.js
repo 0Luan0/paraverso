@@ -30,3 +30,30 @@ export function sanitizeName(name) {
 export function filenameToId(filename) {
   return filename.replace(/\.md$/i, '')
 }
+
+// ── Code block detection (shared by rename propagation + backlinks) ──────────
+
+/**
+ * Finds all code block ranges (fenced ``` and inline `) in text.
+ * Returns array of [startIndex, endIndex] pairs.
+ */
+export function buildCodeSkipRanges(text) {
+  const ranges = []
+  // Fenced code blocks: ```...```
+  const fenceRe = /```[\s\S]*?```/g
+  let m
+  while ((m = fenceRe.exec(text)) !== null) {
+    ranges.push([m.index, m.index + m[0].length])
+  }
+  // Inline code: `...`
+  const inlineRe = /`[^`\n]+`/g
+  while ((m = inlineRe.exec(text)) !== null) {
+    ranges.push([m.index, m.index + m[0].length])
+  }
+  return ranges
+}
+
+/** Checks if a character position falls inside any code block range. */
+export function isInCodeBlock(pos, ranges) {
+  return ranges.some(([s, e]) => pos >= s && pos < e)
+}

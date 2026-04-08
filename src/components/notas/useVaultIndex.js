@@ -7,6 +7,7 @@
 
 import { useEffect, useRef } from 'react'
 import { getTodasNotasMetadata } from '../../db/index'
+import { fuzzyMatch } from '../../lib/fuzzyMatch'
 
 export function useVaultIndex(vaultPath) {
   const vaultIndexRef = useRef(new Map())
@@ -52,7 +53,7 @@ export function useVaultIndex(vaultPath) {
    * during the rebuild window (~700ms) and autocomplete would break.
    */
   function invalidateIndex() {
-    buildVaultIndex()
+    return buildVaultIndex()
   }
 
   /**
@@ -60,7 +61,7 @@ export function useVaultIndex(vaultPath) {
    * Returns up to 8 notes matching the query, split between human and machine.
    */
   function getSuggestions(query) {
-    const q = (query || '').normalize('NFC').toLowerCase().trim()
+    const q = (query || '').normalize('NFC').trim()
     const seen = new Set()
     const human = []
     const machine = []
@@ -68,20 +69,24 @@ export function useVaultIndex(vaultPath) {
     for (const meta of vaultIndexRef.current.values()) {
       if (!meta.titulo) continue
       const key = meta.titulo.normalize('NFC').toLowerCase()
-      const relKey = meta.relativePath?.normalize('NFC').toLowerCase() || ''
-      const dedupKey = meta.hemisphere === 'machine' ? (relKey || key) : key
+      const folder = (meta.folder || meta.caderno || '').normalize('NFC').toLowerCase()
+      const dedupKey = meta.hemisphere === 'machine' ? (folder ? `${folder}/${key}` : key) : key
       if (seen.has(dedupKey)) continue
       seen.add(dedupKey)
 
-      if (!q || key.includes(q) || relKey.includes(q)) {
+      // Fuzzy match against title and folder path
+      const titleMatch = q ? fuzzyMatch(meta.titulo, q) : { match: true, score: 1 }
+      const folderMatch = q && folder ? fuzzyMatch(folder, q) : { match: false, score: 0 }
+      const bestScore = Math.max(titleMatch.score, folderMatch.score)
+
+      if (!q || bestScore > 0) {
         const entry = {
-          titulo:       meta.titulo,
-          caderno:      meta.caderno || '',
-          subpasta:     meta.subpasta || '',
-          editadaEm:    meta.editadaEm || 0,
-          prefixo:      key.startsWith(q) || relKey.startsWith(q),
-          hemisphere:   meta.hemisphere || 'human',
-          relativePath: meta.relativePath || '',
+          titulo:     meta.titulo,
+          folder:     meta.folder || meta.caderno || '',
+          caderno:    meta.caderno || '',
+          editadaEm:  meta.editadaEm || 0,
+          _score:     bestScore,
+          hemisphere: meta.hemisphere || 'human',
         }
         if (meta.hemisphere === 'machine') machine.push(entry)
         else human.push(entry)
@@ -89,7 +94,7 @@ export function useVaultIndex(vaultPath) {
     }
 
     const sortFn = (a, b) => {
-      if (a.prefixo !== b.prefixo) return a.prefixo ? -1 : 1
+      if (a._score !== b._score) return b._score - a._score
       return b.editadaEm - a.editadaEm
     }
     human.sort(sortFn)

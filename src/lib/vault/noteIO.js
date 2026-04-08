@@ -42,16 +42,16 @@ export async function saveNote(vaultPath, nota) {
   const resolve = await acquireSaveLock(nota.id)
   try {
     const baseFilename = sanitizeName(nota.titulo || 'sem-titulo')
-    const cadernoDir   = nota.caderno ? sanitizeName(nota.caderno) : ''
-    const subpastaDir  = nota.subpasta ? sanitizeName(nota.subpasta) : null
-    let dirPath
-    if (cadernoDir && subpastaDir) {
-      dirPath = await el().joinPath(vaultPath, cadernoDir, subpastaDir)
-    } else if (cadernoDir) {
-      dirPath = await el().joinPath(vaultPath, cadernoDir)
-    } else {
-      dirPath = vaultPath
-    }
+
+    // Build directory path from nota.folder (unified path) or legacy caderno+subpasta
+    const folder = nota.folder ?? (
+      nota.caderno && nota.subpasta ? `${nota.caderno}/${nota.subpasta}`
+      : nota.caderno || ''
+    )
+    const folderParts = folder ? folder.split('/').filter(Boolean) : []
+    const dirPath = folderParts.length > 0
+      ? await el().joinPath(vaultPath, ...folderParts)
+      : vaultPath
 
     const newFilename = await resolveFilenameCollision(dirPath, baseFilename, nota.id)
     const newPath     = await el().joinPath(dirPath, newFilename + '.md')
@@ -96,53 +96,53 @@ export async function saveNote(vaultPath, nota) {
 
 // ── Move ─────────────────────────────────────────────────────────────────────
 
-export async function moveNote(vaultPath, nota, novoCaderno, novaSubpasta) {
-  console.log('[moverNotaVault] chamado:', { id: nota?.id, titulo: nota?.titulo, de: nota?.caderno, subDe: nota?.subpasta, para: novoCaderno, subPara: novaSubpasta })
-  // Reject path traversal attempts in subpasta
-  if (novaSubpasta && (/\.\.[\\/]|[\\/]\.\.|^\.\.$/.test(novaSubpasta) || /^[/\\]/.test(novaSubpasta))) {
-    throw new Error('Caminho de subpasta inválido')
+export async function moveNote(vaultPath, nota, newFolder) {
+  // newFolder is a single relative path: "Projetos/Web" or "" (vault root)
+  const targetFolder = (newFolder || '').replace(/^[/\\]+|[/\\]+$/g, '')
+
+  // Reject path traversal attempts
+  if (/\.\.[\\/]|[\\/]\.\.|^\.\.$/.test(targetFolder) || /^[/\\]/.test(targetFolder)) {
+    throw new Error('Caminho de destino inválido')
   }
 
-  // Empty string = vault root (don't sanitize to 'sem-titulo')
-  const cadernoAtual = nota.caderno ? sanitizeName(nota.caderno) : ''
-  const cadernoNovo  = novoCaderno ? sanitizeName(novoCaderno) : ''
-  const subNova = novaSubpasta || undefined
+  // Derive current folder from nota.folder or legacy caderno+subpasta
+  const currentFolder = nota.folder ?? (
+    nota.caderno && nota.subpasta ? `${nota.caderno}/${nota.subpasta}`
+    : nota.caderno || ''
+  )
 
-  // Skip if already in the exact same location
-  if (cadernoAtual === cadernoNovo && (nota.subpasta || undefined) === subNova) return nota
+  // Skip if already at target
+  if (currentFolder === targetFolder) return nota
 
   const filename = nota._filename || sanitizeName(nota.titulo || 'sem-titulo')
 
-  // Build paths — omit empty caderno segments so root notes resolve to vaultPath directly
-  const oldParts = [vaultPath, cadernoAtual, nota.subpasta, filename + '.md'].filter(Boolean)
+  // Build old path from current folder
+  const oldParts = [vaultPath, ...currentFolder.split('/').filter(Boolean), filename + '.md']
   const oldPath = await el().joinPath(...oldParts)
 
-  const newDirParts = [vaultPath, cadernoNovo, subNova].filter(Boolean)
+  // Build new path from target folder
+  const newDirParts = [vaultPath, ...targetFolder.split('/').filter(Boolean)]
   const newDir = await el().joinPath(...newDirParts)
   const newPath = await el().joinPath(newDir, filename + '.md')
+
+  console.log('[moveNote]', currentFolder || '(root)', '→', targetFolder || '(root)')
 
   try {
     const existe = await el().exists(oldPath)
     if (!existe) {
-      console.error('[moverNotaVault] arquivo não encontrado:', oldPath)
+      console.error('[moveNote] file not found:', oldPath)
       throw new Error(`Arquivo não encontrado: ${oldPath}`)
     }
 
+    // Update caderno: in YAML to first segment of target folder (for backward compat)
+    const newCaderno = targetFolder.split('/')[0] || ''
     const raw = await el().readFile(oldPath)
-    let updated = raw.replace(/^caderno:.*$/m, `caderno: ${yamlStr(novoCaderno)}`)
-    // If note has no caderno: field (e.g., Obsidian import), insert it after id:
+    let updated = raw.replace(/^caderno:.*$/m, `caderno: ${yamlStr(newCaderno)}`)
     if (updated === raw && !/^caderno:/m.test(raw)) {
-      updated = raw.replace(/^(id:.*$)/m, `$1\ncaderno: ${yamlStr(novoCaderno)}`)
+      updated = raw.replace(/^(id:.*$)/m, `$1\ncaderno: ${yamlStr(newCaderno)}`)
     }
-    // Update or add subpasta field in frontmatter
-    if (subNova) {
-      if (/^subpasta:.*$/m.test(updated)) {
-        updated = updated.replace(/^subpasta:.*$/m, `subpasta: ${yamlStr(subNova)}`)
-      } else {
-        updated = updated.replace(/^caderno:.*$/m, `caderno: ${yamlStr(novoCaderno)}\nsubpasta: ${yamlStr(subNova)}`)
-      }
-    } else if (/^subpasta:.*$/m.test(updated)) {
-      // Remove subpasta field if moving to caderno root
+    // Remove legacy subpasta: field if present (location is now derived from path)
+    if (/^subpasta:.*$/m.test(updated)) {
       updated = updated.replace(/^subpasta:.*\n?/m, '')
     }
 
@@ -157,15 +157,15 @@ export async function moveNote(vaultPath, nota, novoCaderno, novaSubpasta) {
     try {
       await el().deleteFile(oldPath)
     } catch (delErr) {
-      console.error('[moverNotaVault] rollback: removing new copy after failed delete')
+      console.error('[moveNote] rollback: removing new copy after failed delete')
       try { await el().deleteFile(newPath) } catch { /* best effort */ }
       throw new Error(`Falha ao remover arquivo original: ${delErr?.message}`)
     }
 
-    console.debug('[moverNotaVault] movido:', oldPath, '→', newPath)
-    return { ...nota, caderno: novoCaderno, subpasta: subNova }
+    console.debug('[moveNote] moved:', oldPath, '→', newPath)
+    return { ...nota, folder: targetFolder }
   } catch (err) {
-    console.error('[moverNotaVault] erro ao mover nota:', err)
+    console.error('[moveNote] failed:', err)
     throw err
   }
 }

@@ -85,13 +85,17 @@ export function useNoteActions({
   // ── Load notes when active notebook changes ─────────────────────────────────
 
   useEffect(() => {
-    if (!activeNotebook) return
-    getNotasPorCaderno(activeNotebook)
-      .then(lista => setNotes(lista))
-      .catch(() => setNotes([]))
-    getSubfolders(activeNotebook)
-      .then(folders => setSubfoldersByNotebook(prev => ({ ...prev, [activeNotebook]: folders })))
-      .catch(() => {})
+    let cancelled = false
+    const notebook = activeNotebook || ''
+    getNotasPorCaderno(notebook)
+      .then(lista => { if (!cancelled) setNotes(lista) })
+      .catch(() => { if (!cancelled) setNotes([]) })
+    if (notebook) {
+      getSubfolders(notebook)
+        .then(folders => { if (!cancelled) setSubfoldersByNotebook(prev => ({ ...prev, [notebook]: folders })) })
+        .catch(() => {})
+    }
+    return () => { cancelled = true }
   }, [activeNotebook, vaultPath]) // eslint-disable-line
 
   // Load notes for a notebook WITHOUT changing active notebook (sidebar expand).
@@ -128,7 +132,10 @@ export function useNoteActions({
     invalidateIndex()
     await buildVaultIndex()
     const reloads = []
-    if (activeNotebook) reloads.push(getNotasPorCaderno(activeNotebook).then(lista => setNotes(lista)))
+    if (activeNotebook) {
+      reloads.push(getNotasPorCaderno(activeNotebook).then(lista => setNotes(lista)))
+      reloads.push(getSubfolders(activeNotebook).then(folders => setSubfoldersByNotebook(prev => ({ ...prev, [activeNotebook]: folders }))))
+    }
     reloads.push(getNotasPorCaderno('_machine').then(lista => setNotesByNotebook(prev => ({ ...prev, _machine: lista }))))
     await Promise.all(reloads)
     return newNotebooks
@@ -163,7 +170,10 @@ export function useNoteActions({
   async function createNote(initialTitle, targetNotebook, subfolder) {
     const notebook = targetNotebook !== undefined ? targetNotebook : activeNotebook
     const nota     = criarNotaVazia(notebook || '')
-    if (subfolder) nota.subpasta = subfolder
+    // Set unified folder path
+    const folder = subfolder ? `${notebook}/${subfolder}` : (notebook || '')
+    nota.folder = folder
+    if (subfolder) nota.subpasta = subfolder  // legacy compat for sidebar tree
     const baseName = initialTitle || nota.titulo
     const lista = notebook ? await getNotasPorCaderno(notebook) : rootNotes
     const existingNames = lista.map(n => n.titulo)
@@ -271,41 +281,54 @@ export function useNoteActions({
 
   // ── Move note between notebooks ────────────────────────────────────────────
 
-  async function handleMoveNote(nota, newNotebook, newSubfolder) {
+  async function handleMoveNote(nota, newFolder) {
+    // newFolder is a single path: "Projetos/Web", "Projetos", or "" (root)
     if (!nota) { console.error('[handleMoveNote] nota is undefined'); return }
-    if (nota.caderno === newNotebook && (nota.subpasta || undefined) === (newSubfolder || undefined)) return
+    const currentFolder = nota.folder ?? (
+      nota.caderno && nota.subpasta ? `${nota.caderno}/${nota.subpasta}`
+      : nota.caderno || ''
+    )
+    if (currentFolder === (newFolder || '')) return
 
-    const sourceNotebook = nota.caderno
+    const sourceTop = currentFolder.split('/')[0] || ''
+    const targetTop = (newFolder || '').split('/')[0] || ''
     try {
-      await moverNota(nota, newNotebook, newSubfolder)
+      await moverNota(nota, newFolder || '')
       setNotes(prev => prev.filter(n => n.id !== nota.id))
 
-      // Refresh source and target notebook caches
+      // Refresh source and target top-level folder caches
       setNotesByNotebook(prev => {
         const next = { ...prev }
-        if (sourceNotebook) delete next[sourceNotebook]
-        if (newNotebook) delete next[newNotebook]
+        if (sourceTop) delete next[sourceTop]
+        if (targetTop) delete next[targetTop]
         return next
       })
       const reloads = []
-      if (sourceNotebook) {
-        reloads.push(getNotasPorCaderno(sourceNotebook).then(lista => setNotesByNotebook(prev => ({ ...prev, [sourceNotebook]: lista }))).catch(() => {}))
+      if (sourceTop) {
+        reloads.push(getNotasPorCaderno(sourceTop).then(lista => setNotesByNotebook(prev => ({ ...prev, [sourceTop]: lista }))).catch(() => {}))
       }
-      if (newNotebook) {
-        reloads.push(getNotasPorCaderno(newNotebook).then(lista => setNotesByNotebook(prev => ({ ...prev, [newNotebook]: lista }))).catch(() => {}))
+      if (targetTop) {
+        reloads.push(getNotasPorCaderno(targetTop).then(lista => setNotesByNotebook(prev => ({ ...prev, [targetTop]: lista }))).catch(() => {}))
       }
       await Promise.all(reloads)
 
       // Refresh root notes if source or target is vault root
-      if (!sourceNotebook || !newNotebook) {
+      if (!sourceTop || !targetTop) {
+        await loadRootNotes()
+      }
+
+      // Always reload active notebook's notes so sidebar updates immediately
+      if (activeNotebook) {
+        const lista = await getNotasPorCaderno(activeNotebook)
+        setNotes(lista)
+      } else {
         await loadRootNotes()
       }
 
       if (activeNote?.id === nota.id) {
-        const lista = newNotebook ? await getNotasPorCaderno(newNotebook) : rootNotes
-        setNotes(lista)
-        const complete = lista.find(n => n.id === nota.id)
-        if (complete) navigateTo(complete, newNotebook)
+        const targetList = targetTop ? await getNotasPorCaderno(targetTop) : rootNotes
+        const complete = targetList.find(n => n.id === nota.id)
+        if (complete) navigateTo(complete, targetTop)
       }
       invalidateIndex()
     } catch (e) {

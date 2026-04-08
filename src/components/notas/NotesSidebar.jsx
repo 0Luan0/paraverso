@@ -171,7 +171,7 @@ function SubpastaTreeNode({
         if (!nota) return
         // Don't move if already in this exact subfolder
         if (nota.caderno === cadernoPai && nota.subpasta === fullSub) return
-        onMoverNota(nota, cadernoPai, fullSub)
+        onMoverNota(nota, caminhoCompleto)
       }}
     >
       <button
@@ -646,8 +646,8 @@ export function NotesSidebar({
           if (!nota) nota = notasRaiz.find(n => n.id === notaId)
           if (!nota) return
           // Already at root with no subpasta — no-op
-          if (!nota.caderno && !nota.subpasta) return
-          onMoverNota(nota, '', undefined)
+          if (!nota.folder && !nota.caderno) return
+          onMoverNota(nota, '')
         }}
       >
 

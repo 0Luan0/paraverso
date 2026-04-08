@@ -49,7 +49,11 @@ export function useAutoSave({
     saveTimer.current = setTimeout(async () => {
       setSaveStatus('saving')
       try {
-        await salvarNota(nota)
+        // Always save the latest version from the ref, not the stale closure copy.
+        // This prevents the title-content race condition where an old closure
+        // would overwrite a title rename that happened during the 700ms debounce.
+        const latest = activeNoteRef.current || nota
+        await salvarNota(latest)
         invalidateIndex()
         setSaveStatus('saved')
         if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current)

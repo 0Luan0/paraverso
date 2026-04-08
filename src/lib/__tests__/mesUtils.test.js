@@ -45,9 +45,10 @@ describe('criarMesVazio', () => {
     expect(day1.habitos).toEqual([])
   })
 
-  it('starts with empty habits and metas (user creates their own)', () => {
+  it('starts with generic starter habits and empty metas', () => {
     const mes = criarMesVazio(2026, 1)
-    expect(mes.habitos).toHaveLength(0)
+    expect(mes.habitos).toHaveLength(4)
+    expect(mes.habitos).toContain('Exercício')
     expect(mes.metas).toHaveLength(0)
     expect(mes.resumo).toBe('')
   })

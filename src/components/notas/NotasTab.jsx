@@ -302,7 +302,9 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
 
       if (!nota.conteudo) {
         try {
-          const targetNotebook = nota.caderno || activeNotebook
+          // Use nota.caderno for lookup ('' = root). Don't fall back to activeNotebook
+          // because that could be a different folder than where the note actually lives.
+          const targetNotebook = nota.caderno ?? activeNotebook
           const lista = await getNotasPorCaderno(targetNotebook)
           if (!cancelled) setNotes(lista)
           const complete = lista.find(n =>
@@ -398,7 +400,7 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
           {activeNote && (
             <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none' }}>
               <span style={{ fontSize: '11px', color: '#4a4a4a', userSelect: 'none' }}>
-                {activeNote.caderno && <>{activeNote.caderno}{activeNote.subpasta ? ` / ${activeNote.subpasta}` : ''}  /  </>}
+                {(activeNote.folder || activeNote.caderno) && <>{(activeNote.folder || activeNote.caderno).replace(/\//g, ' / ')}  /  </>}
                 {activeNote.titulo}
               </span>
             </div>

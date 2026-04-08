@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { getTodasNotasMetadata } from '../db/index'
+import { fuzzyFilter } from '../lib/fuzzyMatch'
 
 const MACHINE_COLOR = '#9d8ff5'
 
@@ -33,23 +34,18 @@ export function QuickSwitcher({ onClose, onAbrirNota, vaultPath }) {
     requestAnimationFrame(() => inputRef.current?.focus())
   }, [vaultPath])
 
-  // Filter on query change
+  // Filter on query change — fuzzy search across title, folder, and filename
   useEffect(() => {
     try {
-      const q = query.trim().toLowerCase()
+      const q = query.trim()
       if (!q) {
         setFiltradas(todasNotas.slice(0, 25))
       } else {
-        setFiltradas(
-          todasNotas
-            .filter(n => {
-              const titulo  = String(n.titulo  ?? '').toLowerCase()
-              const caderno = String(n.caderno ?? '').toLowerCase()
-              const rel     = String(n.relativePath ?? '').toLowerCase()
-              return titulo.includes(q) || caderno.includes(q) || rel.includes(q)
-            })
-            .slice(0, 25)
-        )
+        setFiltradas(fuzzyFilter(todasNotas, q, n => [
+          String(n.titulo ?? ''),
+          String(n.folder ?? n.caderno ?? ''),
+          String(n._filename ?? ''),
+        ], 25))
       }
       setCursor(0)
     } catch {
@@ -141,16 +137,16 @@ export function QuickSwitcher({ onClose, onAbrirNota, vaultPath }) {
                     {nota.titulo || 'Sem título'}
                   </span>
 
-                  {/* Badge */}
+                  {/* Badge — shows folder path */}
                   {isMachine ? (
                     <span style={{ fontSize: 10, color: MACHINE_COLOR, background: '#1e1a2e', borderRadius: 4, padding: '1px 6px', flexShrink: 0 }}>
-                      {nota.subpasta || 'máquina'}
+                      {(nota.folder || 'máquina').replace(/\//g, ' / ')}
                     </span>
-                  ) : (
+                  ) : nota.folder ? (
                     <span className="text-xs text-ink-3 dark:text-ink-dark3 flex-shrink-0 bg-bg-2 dark:bg-bg-dark2 px-2 py-0.5 rounded-full">
-                      {nota.caderno}
+                      {nota.folder.replace(/\//g, ' / ')}
                     </span>
-                  )}
+                  ) : null}
                 </button>
               )
             })

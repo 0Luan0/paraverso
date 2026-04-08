@@ -37,9 +37,9 @@ export async function readMonthConfig(vaultPath, ano, mes) {
   }
 
   if (!exists) {
-    // Create with empty defaults — user adds their own habits and categories
+    // Create with generic starter habits — user customizes via Hábitos button
     const config = {
-      habitos: [],
+      habitos: ['Exercício', 'Leitura', 'Foco', 'Saúde'],
       categorias: [],
     }
     try { await el().mkdir(dirPath) } catch { /* already exists */ }

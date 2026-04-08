@@ -2,7 +2,7 @@
  * vault/folderOps.js — Folder/notebook CRUD, move, delete, rename propagation.
  */
 
-import { el, RESERVED_DIRS, MACHINE_DIRS, sanitizeName } from './shared.js'
+import { el, RESERVED_DIRS, MACHINE_DIRS, sanitizeName, buildCodeSkipRanges, isInCodeBlock } from './shared.js'
 import { getTemplatesDir } from './shared.js'
 import { _getAllMdPaths } from './pathUtils.js'
 
@@ -48,10 +48,7 @@ export async function moveNotebook(vaultPath, fromRelPath, toRelPath) {
     if (RESERVED_DIRS.has(toTop) || MACHINE_DIRS.has(toTop)) throw new Error(`Destino é pasta reservada: ${toTop}`)
   }
 
-  const tplDir = (getTemplatesDir() || 'templates').toLowerCase()
-  if (fromTop.toLowerCase() === tplDir) {
-    throw new Error('Pasta de templates não pode ser movida enquanto estiver configurada como tal')
-  }
+  // Templates folder: allowed to move/delete (UI handles confirmation)
 
   // Cycle detection: can't move folder into itself or its children
   if (to && (to === from || to.startsWith(from + '/') || to.startsWith(from + '\\'))) {
@@ -108,10 +105,7 @@ export async function deleteNotebook(vaultPath, relPath) {
   if (RESERVED_DIRS.has(topSeg) || MACHINE_DIRS.has(topSeg)) {
     throw new Error(`Pasta reservada não pode ser deletada: ${topSeg}`)
   }
-  const tplDir = (getTemplatesDir() || 'templates').toLowerCase()
-  if (topSeg.toLowerCase() === tplDir) {
-    throw new Error('Pasta de templates não pode ser deletada enquanto estiver configurada como tal')
-  }
+  // Templates folder: allowed to delete (UI already shows confirmation dialog)
 
   const absPath = await el().joinPath(vaultPath, ...rel.split(/[/\\]/))
   if (!(await el().exists(absPath))) {
@@ -164,13 +158,30 @@ export async function propagateRename(vaultPath, tituloAntigo, tituloNovo) {
     try {
       const raw = await el().readFile(filePath)
       if (!raw || !raw.includes(`[[${oldNorm}`)) continue
-      const next = raw.replace(re, (_m, alias) => `[[${newNorm}${alias || ''}]]`)
+
+      // Skip wikilinks inside code blocks (fenced ``` and inline `)
+      const skipRanges = buildCodeSkipRanges(raw)
+      re.lastIndex = 0
+      let match
+      const pieces = []
+      let lastEnd = 0
+      while ((match = re.exec(raw)) !== null) {
+        if (isInCodeBlock(match.index, skipRanges)) continue
+        pieces.push(raw.slice(lastEnd, match.index))
+        const alias = match[1] || ''
+        pieces.push(`[[${newNorm}${alias}]]`)
+        lastEnd = match.index + match[0].length
+      }
+      if (pieces.length === 0) continue // all matches were in code blocks
+      pieces.push(raw.slice(lastEnd))
+      const next = pieces.join('')
+
       if (next !== raw) {
         await el().writeFile(filePath, next)
         updated.push(filePath)
       }
     } catch (err) {
-      console.warn('[propagarRenameVault] falha ao processar', filePath, err?.message)
+      console.warn('[propagateRename] falha ao processar', filePath, err?.message)
     }
   }
   return updated

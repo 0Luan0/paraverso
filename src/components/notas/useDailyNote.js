@@ -67,7 +67,9 @@ export function useDailyNote({
       updateTab(() => ({ caderno: targetNotebook }))
     }
     const nota = criarNotaVazia(targetNotebook)
-    if (autoSub) nota.subpasta = autoSub
+    // Set unified folder path
+    nota.folder = autoSub ? `${targetNotebook}/${autoSub}` : (targetNotebook || '')
+    if (autoSub) nota.subpasta = autoSub  // legacy compat
     nota.titulo = titulo
     nota.conteudo = {
       type: 'doc',

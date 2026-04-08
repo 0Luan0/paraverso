@@ -55,21 +55,31 @@ export function _relParts(filePath, vaultPath) {
 }
 
 /**
- * Extracts subfolder path between notebook and file.
- * '/vault/Refs/Videos/note.md' → 'Videos'
- * '/vault/Refs/note.md' → null
+ * Extracts the full folder path from an absolute file path, relative to vault root.
+ * '/vault/Projetos/Web/React/note.md' → 'Projetos/Web/React'
+ * '/vault/Projetos/note.md' → 'Projetos'
+ * '/vault/note.md' → '' (root-level note)
+ *
+ * This is the single source of truth for a note's location.
+ * Replaces the old _topDir + _subpasta split.
  */
+export function _relativeFolder(filePath, vaultPath) {
+  const parts = _relParts(filePath, vaultPath)
+  // parts = [folder1, folder2, ..., filename] — drop the filename
+  if (parts.length < 2) return ''
+  return parts.slice(0, -1).join('/')
+}
+
+// ── Legacy helpers (still used during transition) ────────────────────────────
+
+/** @deprecated Use _relativeFolder instead */
 export function _subpasta(filePath, vaultPath) {
   const parts = _relParts(filePath, vaultPath)
   if (parts.length >= 3) return parts.slice(1, -1).join('/')
   return null
 }
 
-/**
- * Extracts the top-level notebook directory from an absolute file path.
- * '/vault/Notebook/note.md' → 'Notebook'
- * '/vault/note.md' → '' (root-level note)
- */
+/** @deprecated Use _relativeFolder instead */
 export function _topDir(filePath, vaultPath) {
   const parts = _relParts(filePath, vaultPath)
   if (parts.length < 2) return ''

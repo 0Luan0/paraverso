@@ -104,10 +104,12 @@ export async function salvarNota(nota) {
   await db.notas.put(nota)
 }
 
-export async function moverNota(nota, novoCaderno, novaSubpasta) {
-  if (useVaultFs()) return vault.moverNotaVault(_vaultPath, nota, novoCaderno, novaSubpasta)
-  nota.caderno = novoCaderno
-  nota.subpasta = novaSubpasta || undefined
+export async function moverNota(nota, newFolder) {
+  if (useVaultFs()) return vault.moverNotaVault(_vaultPath, nota, newFolder)
+  // Dexie fallback: update folder + legacy caderno field
+  nota.folder = newFolder || ''
+  nota.caderno = (newFolder || '').split('/')[0] || ''
+  nota.subpasta = undefined
   await db.notas.put(nota)
   return nota
 }
