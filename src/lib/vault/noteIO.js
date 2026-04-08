@@ -98,8 +98,14 @@ export async function saveNote(vaultPath, nota) {
 
 export async function moveNote(vaultPath, nota, novoCaderno, novaSubpasta) {
   console.log('[moverNotaVault] chamado:', { id: nota?.id, titulo: nota?.titulo, de: nota?.caderno, subDe: nota?.subpasta, para: novoCaderno, subPara: novaSubpasta })
-  const cadernoAtual = sanitizeName(nota.caderno || '')
-  const cadernoNovo  = sanitizeName(novoCaderno || '')
+  // Reject path traversal attempts in subpasta
+  if (novaSubpasta && (/\.\.[\\/]|[\\/]\.\.|^\.\.$/.test(novaSubpasta) || /^[/\\]/.test(novaSubpasta))) {
+    throw new Error('Caminho de subpasta inválido')
+  }
+
+  // Empty string = vault root (don't sanitize to 'sem-titulo')
+  const cadernoAtual = nota.caderno ? sanitizeName(nota.caderno) : ''
+  const cadernoNovo  = novoCaderno ? sanitizeName(novoCaderno) : ''
   const subNova = novaSubpasta || undefined
 
   // Skip if already in the exact same location
@@ -107,13 +113,12 @@ export async function moveNote(vaultPath, nota, novoCaderno, novaSubpasta) {
 
   const filename = nota._filename || sanitizeName(nota.titulo || 'sem-titulo')
 
-  const oldPath = nota.subpasta
-    ? await el().joinPath(vaultPath, cadernoAtual, nota.subpasta, filename + '.md')
-    : await el().joinPath(vaultPath, cadernoAtual, filename + '.md')
+  // Build paths — omit empty caderno segments so root notes resolve to vaultPath directly
+  const oldParts = [vaultPath, cadernoAtual, nota.subpasta, filename + '.md'].filter(Boolean)
+  const oldPath = await el().joinPath(...oldParts)
 
-  const newDir = subNova
-    ? await el().joinPath(vaultPath, cadernoNovo, subNova)
-    : await el().joinPath(vaultPath, cadernoNovo)
+  const newDirParts = [vaultPath, cadernoNovo, subNova].filter(Boolean)
+  const newDir = await el().joinPath(...newDirParts)
   const newPath = await el().joinPath(newDir, filename + '.md')
 
   try {
@@ -125,6 +130,10 @@ export async function moveNote(vaultPath, nota, novoCaderno, novaSubpasta) {
 
     const raw = await el().readFile(oldPath)
     let updated = raw.replace(/^caderno:.*$/m, `caderno: ${yamlStr(novoCaderno)}`)
+    // If note has no caderno: field (e.g., Obsidian import), insert it after id:
+    if (updated === raw && !/^caderno:/m.test(raw)) {
+      updated = raw.replace(/^(id:.*$)/m, `$1\ncaderno: ${yamlStr(novoCaderno)}`)
+    }
     // Update or add subpasta field in frontmatter
     if (subNova) {
       if (/^subpasta:.*$/m.test(updated)) {
@@ -144,7 +153,14 @@ export async function moveNote(vaultPath, nota, novoCaderno, novaSubpasta) {
       throw new Error(`Write falhou — arquivo não encontrado no destino: ${newPath}`)
     }
 
-    await el().deleteFile(oldPath)
+    // Delete old file — rollback new copy if delete fails
+    try {
+      await el().deleteFile(oldPath)
+    } catch (delErr) {
+      console.error('[moverNotaVault] rollback: removing new copy after failed delete')
+      try { await el().deleteFile(newPath) } catch { /* best effort */ }
+      throw new Error(`Falha ao remover arquivo original: ${delErr?.message}`)
+    }
 
     console.debug('[moverNotaVault] movido:', oldPath, '→', newPath)
     return { ...nota, caderno: novoCaderno, subpasta: subNova }

@@ -574,6 +574,7 @@ export function NoteEditorCM({
   backlinks,
   getSuggestions,
   onTituloChange,
+  onTituloBlur,
   onConteudoChange,
   onWikiLinkClick,
 }) {
@@ -702,6 +703,7 @@ export function NoteEditorCM({
           type="text"
           value={nota?.titulo ?? ''}
           onChange={e => onTituloChange?.(e.target.value)}
+          onBlur={() => onTituloBlur?.()}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); viewRef.current?.focus() } }}
           placeholder="Sem título"
           className="w-full font-serif text-2xl font-semibold bg-transparent text-ink dark:text-ink-dark placeholder-ink-3/40 dark:placeholder-ink-dark3/40 focus:outline-none"

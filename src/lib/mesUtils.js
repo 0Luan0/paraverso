@@ -55,12 +55,9 @@ export function criarMesVazio(ano, mes) {
     id: mesId(ano, mes),
     ano,
     mes,
-    habitos: ['Treino', 'Leitura', 'Foco', 'Bem-estar'],
+    habitos: [],
     dias,
-    metas: [
-      { id: crypto.randomUUID(), categoria: 'Leituras', itens: [] },
-      { id: crypto.randomUUID(), categoria: 'Projetos', itens: [] },
-    ],
+    metas: [],
     resumo: '',
   }
 }

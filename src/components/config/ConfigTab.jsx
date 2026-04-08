@@ -25,8 +25,9 @@ const SKIP_DIRS = new Set([
  * Ignora pastas ocultas e de assets.
  */
 async function scanObsidianVault(folderPath, cadernoHint = null, subpastaHint = null, depth = 0) {
-  const allEntries  = await el().readdir(folderPath)
-  const dirEntries  = await el().readdir(folderPath, { dirsOnly: true })
+  // Use importReaddir (no vault validation) to scan external Obsidian vaults
+  const allEntries  = await el().importReaddir(folderPath)
+  const dirEntries  = await el().importReaddir(folderPath, { dirsOnly: true })
   const dirSet      = new Set(dirEntries)
 
   const mdFiles = allEntries.filter(e => !dirSet.has(e) && e.toLowerCase().endsWith('.md'))
@@ -70,7 +71,8 @@ function yamlStr(s) {
  */
 async function importarArquivo(filePath, caderno, vaultPath, { sobrescrever = false, subpasta = null } = {}) {
   try {
-    const raw = await el().readFile(filePath)
+    // Use importReadFile (no vault validation) — source file is in external Obsidian vault
+    const raw = await el().importReadFile(filePath)
 
     // ── Detecta se já é Paraverso nativo (tem id: no frontmatter YAML) ────
     // Preserva o ID original para evitar conflitos ao re-importar
@@ -235,7 +237,7 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
       setTemplatesDir(dir)
     }).catch(() => {})
     window.electron?.getConfig('journalCaderno').then(v => {
-      if (v) setJournalCaderno(v)
+      setJournalCaderno(v || 'meses')
     }).catch(() => {})
     carregarTemplates()
   }, [])
@@ -750,7 +752,7 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
               onChange={e => salvarDefaultCaderno(e.target.value)}
               className="flex-1 bg-bg dark:bg-bg-dark border border-bdr dark:border-bdr-dark rounded-lg px-3 py-2 text-sm text-ink dark:text-ink-dark focus:outline-none focus:border-accent dark:focus:border-accent-dark transition-colors"
             >
-              <option value="">— Usar caderno ativo —</option>
+              <option value="">— Raiz do vault —</option>
               {cadernos.map(c => (
                 <option key={c.id} value={c.nome}>{c.nome}</option>
               ))}
@@ -795,12 +797,13 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
               onChange={e => salvarJournalCaderno(e.target.value)}
               className="flex-1 bg-bg dark:bg-bg-dark border border-bdr dark:border-bdr-dark rounded-lg px-3 py-2 text-sm text-ink dark:text-ink-dark focus:outline-none focus:border-accent dark:focus:border-accent-dark transition-colors"
             >
-              <option value="">— Usar caderno ativo —</option>
-              {cadernos.map(c => (
+              <option value="">— Raiz do vault —</option>
+              <option value="meses">meses (padrão)</option>
+              {cadernos.filter(c => c.nome !== 'meses').map(c => (
                 <option key={c.id} value={c.nome}>{c.nome}</option>
               ))}
               {/* Fallback: se o valor atual é um path nested (ex: "Arquivo/Codex" após folder move), mostra como opção extra */}
-              {journalCaderno && journalCaderno.includes('/') && !cadernos.some(c => c.nome === journalCaderno) && (
+              {journalCaderno && journalCaderno !== 'meses' && journalCaderno.includes('/') && !cadernos.some(c => c.nome === journalCaderno) && (
                 <option value={journalCaderno}>{journalCaderno} (subpasta)</option>
               )}
             </select>

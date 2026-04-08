@@ -124,6 +124,15 @@ function AppInner() {
   // Limpa tema customizado legado (se existir)
   useEffect(() => { localStorage.removeItem('paraverso-tema-custom') }, [])
 
+  // Notify Notes tab when it becomes visible so it can refresh vault data
+  const prevAbaRef = useRef(aba)
+  useEffect(() => {
+    if (aba === 'notas' && prevAbaRef.current !== 'notas') {
+      window.dispatchEvent(new CustomEvent('paraverso:notas-visible'))
+    }
+    prevAbaRef.current = aba
+  }, [aba])
+
   // Listener global de toasts genéricos (folder moves, rename propagation, erros)
   useEffect(() => {
     function handleToast(e) {
@@ -207,6 +216,21 @@ function AppInner() {
     }
     window.addEventListener('paraverso:abrir-em-notas', onAbrirEmNotas)
     return () => window.removeEventListener('paraverso:abrir-em-notas', onAbrirEmNotas)
+  }, [])
+
+  // Open a daily note for a specific date (from Month tab ↗ button)
+  useEffect(() => {
+    function handleOpenDailyNote(e) {
+      const dateStr = e.detail?.date
+      setAba('notas')
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('paraverso:journal', {
+          detail: dateStr ? { date: dateStr } : undefined
+        }))
+      }, 50)
+    }
+    window.addEventListener('paraverso:open-daily-note', handleOpenDailyNote)
+    return () => window.removeEventListener('paraverso:open-daily-note', handleOpenDailyNote)
   }, [])
 
   // Still loading vault path from config

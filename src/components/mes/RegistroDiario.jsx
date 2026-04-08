@@ -17,8 +17,8 @@ export function RegistroDiario({ mesObj, hoje, setMesObj, onSaveMonth }) {
     ? hoje.getDate()
     : null
 
-  // Debounced save for a specific day's data to its daily note file.
-  // Immediate UI update via setMesObj, then async file write after 600ms.
+  // Save a specific day's data to its daily note file.
+  // Debounce keeps rapid typing from flooding disk; flushDaySave forces immediate write.
   const debouncedDaySave = useCallback((diaIdx, newMesObj) => {
     const dia = newMesObj.dias[diaIdx]
     const key = dia.n
@@ -29,7 +29,7 @@ export function RegistroDiario({ mesObj, hoje, setMesObj, onSaveMonth }) {
         newMesObj.ano, newMesObj.mes, dia.n,
         newMesObj.habitos, dia.habitos, dia.memo
       )
-    }, 600)
+    }, 300)
   }, [])
 
   function ciclarHabito(diaIdx, habitoIdx) {
@@ -46,7 +46,11 @@ export function RegistroDiario({ mesObj, hoje, setMesObj, onSaveMonth }) {
     const newMesObj = { ...mesObj, dias }
 
     setMesObj(newMesObj)           // instant UI update
-    debouncedDaySave(diaIdx, newMesObj) // async file write
+    // Habit clicks are discrete — save immediately, no debounce
+    salvarDiaGrid(
+      newMesObj.ano, newMesObj.mes, dia.n,
+      newMesObj.habitos, dia.habitos, dia.memo
+    )
   }
 
   function salvarMemo(diaIdx, valor) {
@@ -160,13 +164,41 @@ export function RegistroDiario({ mesObj, hoje, setMesObj, onSaveMonth }) {
                         type="text"
                         value={dia.memo}
                         onChange={e => salvarMemo(diaIdx, e.target.value)}
+                        onBlur={() => {
+                          // Flush pending save immediately when user leaves the field
+                          const key = dia.n
+                          if (daySaveTimers.current[key]) {
+                            clearTimeout(daySaveTimers.current[key])
+                            delete daySaveTimers.current[key]
+                            salvarDiaGrid(
+                              mesObj.ano, mesObj.mes, dia.n,
+                              mesObj.habitos, dia.habitos, dia.memo
+                            )
+                          }
+                        }}
                         placeholder={ehHoje ? 'O que ficou hoje?' : ''}
                         className="w-full bg-transparent text-sm text-ink dark:text-ink-dark placeholder-ink-3/50 dark:placeholder-ink-dark3/50 focus:outline-none border-b border-transparent focus:border-bdr dark:focus:border-bdr-dark transition-colors"
                       />
                       <button
-                        onClick={() => setModalDia(dia)}
+                        onClick={() => {
+                          // Flush pending save first, then switch to Notes tab
+                          const key = dia.n
+                          if (daySaveTimers.current[key]) {
+                            clearTimeout(daySaveTimers.current[key])
+                            delete daySaveTimers.current[key]
+                            salvarDiaGrid(
+                              mesObj.ano, mesObj.mes, dia.n,
+                              mesObj.habitos, dia.habitos, dia.memo
+                            )
+                          }
+                          // Open the daily note in the Notes tab via App.jsx routing
+                          const date = new Date(mesObj.ano, mesObj.mes - 1, dia.n)
+                          window.dispatchEvent(new CustomEvent('paraverso:open-daily-note', {
+                            detail: { date: date.toISOString() }
+                          }))
+                        }}
                         className="opacity-0 group-hover:opacity-100 text-ink-3 dark:text-ink-dark3 hover:text-accent dark:hover:text-accent-dark transition-all text-xs ml-1 flex-shrink-0"
-                        title="Expandir nota do dia"
+                        title="Abrir nota do dia"
                       >
                         ↗
                       </button>

@@ -18,6 +18,11 @@ let configuredTemplatesDir = 'templates'
 export function setTemplatesDir(nome) { configuredTemplatesDir = nome || 'templates' }
 export function getTemplatesDir() { return configuredTemplatesDir }
 
+/**
+ * Sanitizes a name for use as a filename. Returns 'sem-titulo' for falsy input.
+ * For folder paths where '' means vault root, callers must guard:
+ *   name ? sanitizeName(name) : ''
+ */
 export function sanitizeName(name) {
   return (name || 'sem-titulo').replace(/[/\\:*?"<>|]/g, '-').trim() || 'sem-titulo'
 }

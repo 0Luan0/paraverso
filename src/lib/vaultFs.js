@@ -33,6 +33,7 @@ export { deleteNote as deletarNotaVault } from './vault/noteIO.js'
 // Note queries + templates + backlinks — new English names
 export {
   getNotesByNotebook,
+  getSubfolders,
   getAllNotes,
   getNotesForGraph,
   getAllNotesMetadata,

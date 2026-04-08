@@ -7,7 +7,7 @@
 
 import { useEffect } from 'react'
 import { criarNotaVazia, salvarNota, getNotasPorCaderno, splitCadernoPath } from '../../db/index'
-import { MESES_PT_LOWER, DIAS_SEMANA } from '../../lib/mesUtils'
+import { MESES_PT_LOWER, DIAS_SEMANA, monthFolderName } from '../../lib/mesUtils'
 
 export function useDailyNote({
   activeNotebook,
@@ -21,17 +21,23 @@ export function useDailyNote({
   loadRootNotes,
 }) {
 
-  async function createDailyNote() {
-    const now    = new Date()
+  async function createDailyNote(targetDate) {
+    const now    = targetDate || new Date()
     const dia    = now.getDate()
     const mes    = MESES_PT_LOWER[now.getMonth()]
     const ano    = now.getFullYear()
     const diaSem = DIAS_SEMANA[now.getDay()]
     const titulo = `${dia} ${mes} ${ano}`
 
-    const journalConfig = (await window.electron?.getConfig('journalCaderno')) || ''
+    const journalConfig = (await window.electron?.getConfig('journalCaderno')) || 'meses'
     const { caderno: journalCad, subpasta: journalSub } = splitCadernoPath(journalConfig)
-    const targetNotebook = journalCad || ''
+    const targetNotebook = journalCad || 'meses'
+
+    // When journal is in 'meses', auto-set subfolder to current month (YYYY-MM)
+    // so notes end up at meses/2026-04/8 abril 2026.md — aligned with Month Tab
+    const autoSub = journalCad === 'meses' && !journalSub
+      ? monthFolderName(ano, now.getMonth() + 1)
+      : journalSub
 
     const key = titulo.normalize('NFC').toLowerCase()
     let meta = vaultIndexRef.current.get(key)
@@ -61,7 +67,7 @@ export function useDailyNote({
       updateTab(() => ({ caderno: targetNotebook }))
     }
     const nota = criarNotaVazia(targetNotebook)
-    if (journalSub) nota.subpasta = journalSub
+    if (autoSub) nota.subpasta = autoSub
     nota.titulo = titulo
     nota.conteudo = {
       type: 'doc',
@@ -81,10 +87,14 @@ export function useDailyNote({
     navigateTo(nota, targetNotebook)
   }
 
-  // Listen for journal event
+  // Listen for journal event — supports optional date in e.detail
   useEffect(() => {
-    window.addEventListener('paraverso:journal', createDailyNote)
-    return () => window.removeEventListener('paraverso:journal', createDailyNote)
+    function handleJournal(e) {
+      const date = e.detail?.date ? new Date(e.detail.date) : undefined
+      createDailyNote(date)
+    }
+    window.addEventListener('paraverso:journal', handleJournal)
+    return () => window.removeEventListener('paraverso:journal', handleJournal)
   }, [activeNotebook, notebooks]) // eslint-disable-line
 
   return { createDailyNote }

@@ -8,7 +8,7 @@
 import { useState, useEffect } from 'react'
 import {
   db, getCadernos, criarCaderno, criarNotaVazia,
-  salvarNota, deletarNota, moverNota, getNotasPorCaderno, getVaultPath,
+  salvarNota, deletarNota, moverNota, getNotasPorCaderno, getSubfolders, getVaultPath,
   moverCaderno, remapCadernoConfigs, splitCadernoPath, propagarRename,
   deletarCaderno as deletarCadernoVault, criarSubpasta, resolverPastaAbs,
 } from '../../db/index'
@@ -46,6 +46,7 @@ export function useNoteActions({
   const [notebooks, setNotebooks]     = useState([])
   const [notes, setNotes]             = useState([])
   const [notesByNotebook, setNotesByNotebook] = useState({})
+  const [subfoldersByNotebook, setSubfoldersByNotebook] = useState({})
   const [rootNotes, setRootNotes]     = useState([])
 
   // ── Load root notes ───────────────────────────────────────────────────────
@@ -75,6 +76,10 @@ export function useNoteActions({
       }
     })
     loadRootNotes()
+    // Eager-load _machine notes so drag-and-drop works even when hemisphere is collapsed
+    getNotasPorCaderno('_machine')
+      .then(lista => setNotesByNotebook(prev => ({ ...prev, _machine: lista })))
+      .catch(() => {})
   }, [vaultPath]) // eslint-disable-line
 
   // ── Load notes when active notebook changes ─────────────────────────────────
@@ -84,14 +89,22 @@ export function useNoteActions({
     getNotasPorCaderno(activeNotebook)
       .then(lista => setNotes(lista))
       .catch(() => setNotes([]))
+    getSubfolders(activeNotebook)
+      .then(folders => setSubfoldersByNotebook(prev => ({ ...prev, [activeNotebook]: folders })))
+      .catch(() => {})
   }, [activeNotebook, vaultPath]) // eslint-disable-line
 
-  // Load notes for a notebook WITHOUT changing active notebook (sidebar expand)
+  // Load notes for a notebook WITHOUT changing active notebook (sidebar expand).
+  // Always loads if not cached yet; skips if already in cache (reset by refreshVaultState).
   async function loadNotebookNotes(name) {
-    if (notesByNotebook[name]) return
+    if (notesByNotebook[name] !== undefined) return
     try {
-      const lista = await getNotasPorCaderno(name)
+      const [lista, folders] = await Promise.all([
+        getNotasPorCaderno(name),
+        getSubfolders(name),
+      ])
       setNotesByNotebook(prev => ({ ...prev, [name]: lista }))
+      setSubfoldersByNotebook(prev => ({ ...prev, [name]: folders }))
     } catch {
       setNotesByNotebook(prev => ({ ...prev, [name]: [] }))
     }
@@ -110,6 +123,7 @@ export function useNoteActions({
     const newNotebooks = await getCadernos()
     setNotebooks(newNotebooks)
     setNotesByNotebook({})
+    setSubfoldersByNotebook({})
     await loadRootNotes()
     invalidateIndex()
     await buildVaultIndex()
@@ -129,6 +143,7 @@ export function useNoteActions({
         const newNotebooks = await getCadernos()
         setNotebooks(newNotebooks)
         setNotesByNotebook({})
+    setSubfoldersByNotebook({})
         await loadRootNotes()
         await buildVaultIndex()
         const reloads = []
@@ -199,6 +214,7 @@ export function useNoteActions({
     invalidateIndex()
     await buildVaultIndex()
     setNotesByNotebook({})
+    setSubfoldersByNotebook({})
     await loadRootNotes()
     const reloads = []
     if (activeNotebook) reloads.push(getNotasPorCaderno(activeNotebook))
@@ -257,27 +273,36 @@ export function useNoteActions({
 
   async function handleMoveNote(nota, newNotebook, newSubfolder) {
     if (!nota) { console.error('[handleMoveNote] nota is undefined'); return }
-    if (!newNotebook) { console.error('[handleMoveNote] newNotebook is undefined'); return }
     if (nota.caderno === newNotebook && (nota.subpasta || undefined) === (newSubfolder || undefined)) return
 
     const sourceNotebook = nota.caderno
     try {
       await moverNota(nota, newNotebook, newSubfolder)
       setNotes(prev => prev.filter(n => n.id !== nota.id))
+
+      // Refresh source and target notebook caches
       setNotesByNotebook(prev => {
         const next = { ...prev }
-        delete next[sourceNotebook]
-        delete next[newNotebook]
+        if (sourceNotebook) delete next[sourceNotebook]
+        if (newNotebook) delete next[newNotebook]
         return next
       })
-      const reloads = [
-        getNotasPorCaderno(sourceNotebook).then(lista => setNotesByNotebook(prev => ({ ...prev, [sourceNotebook]: lista }))).catch(() => {}),
-        getNotasPorCaderno(newNotebook).then(lista => setNotesByNotebook(prev => ({ ...prev, [newNotebook]: lista }))).catch(() => {}),
-      ]
+      const reloads = []
+      if (sourceNotebook) {
+        reloads.push(getNotasPorCaderno(sourceNotebook).then(lista => setNotesByNotebook(prev => ({ ...prev, [sourceNotebook]: lista }))).catch(() => {}))
+      }
+      if (newNotebook) {
+        reloads.push(getNotasPorCaderno(newNotebook).then(lista => setNotesByNotebook(prev => ({ ...prev, [newNotebook]: lista }))).catch(() => {}))
+      }
       await Promise.all(reloads)
 
+      // Refresh root notes if source or target is vault root
+      if (!sourceNotebook || !newNotebook) {
+        await loadRootNotes()
+      }
+
       if (activeNote?.id === nota.id) {
-        const lista = await getNotasPorCaderno(newNotebook)
+        const lista = newNotebook ? await getNotasPorCaderno(newNotebook) : rootNotes
         setNotes(lista)
         const complete = lista.find(n => n.id === nota.id)
         if (complete) navigateTo(complete, newNotebook)
@@ -316,6 +341,7 @@ export function useNoteActions({
       const newNotebooks = await getCadernos()
       setNotebooks(newNotebooks)
       setNotesByNotebook({})
+    setSubfoldersByNotebook({})
       await loadRootNotes()
       invalidateIndex()
       await buildVaultIndex()
@@ -597,6 +623,7 @@ export function useNoteActions({
     notebooks, setNotebooks,
     notes, setNotes,
     notesByNotebook, setNotesByNotebook,
+    subfoldersByNotebook,
     rootNotes,
     loadRootNotes,
     loadNotebookNotes,

@@ -55,11 +55,25 @@ function NoteItem({ nota, selecionada, onSelect, onDelete, formatarData, compact
 
 /**
  * Constrói uma árvore a partir de notas flat, usando n.subpasta como path.
+ * Also includes empty folders from `diskFolders` (array of relative paths like ['A', 'A/B']).
  * Retorna { notas: [], children: Map<string, Node> } onde children são sub-pastas.
- * Ex: nota com subpasta="A/B" → root.children.get('A').children.get('B').notas
  */
-function buildSubpastaTree(notas) {
+function buildSubpastaTree(notas, diskFolders = []) {
   const root = { notas: [], children: new Map() }
+
+  // Ensure all on-disk folders exist in the tree (even if empty)
+  for (const folderPath of diskFolders) {
+    const parts = String(folderPath).split(/[/\\]/).filter(Boolean)
+    let cur = root
+    for (const part of parts) {
+      if (!cur.children.has(part)) {
+        cur.children.set(part, { notas: [], children: new Map() })
+      }
+      cur = cur.children.get(part)
+    }
+  }
+
+  // Place notes into the tree
   for (const n of notas) {
     if (!n.subpasta) {
       root.notas.push(n)
@@ -98,6 +112,9 @@ function SubpastaTreeNode({
   notas, notasPorCaderno, notasRaiz,
 }) {
   const [dragOver, setDragOver] = useState(false)
+  // Counter tracks enter/leave pairs from child elements — only highlight
+  // when counter > 0, and clear on drop. This prevents the "stuck highlight" bug.
+  const dragCounterRef = useRef(0)
   const fullSub = pathPrefix ? `${pathPrefix}/${nome}` : nome
   const caminhoCompleto = `${cadernoPai}/${fullSub}`
   const collapsed = !expandedSubpastas.has(caminhoCompleto)
@@ -106,6 +123,14 @@ function SubpastaTreeNode({
   return (
     <div
       className={`rounded-md transition-colors ${dragOver ? 'bg-accent/15 dark:bg-accent-dark/15 ring-1 ring-accent/40 dark:ring-accent-dark/40' : ''}`}
+      onDragEnter={e => {
+        const hasFolder = e.dataTransfer.types.includes('folderpath') || e.dataTransfer.types.includes('folderPath')
+        const hasNota   = e.dataTransfer.types.includes('notaid') || e.dataTransfer.types.includes('notaId')
+        if (!hasFolder && !hasNota) return
+        e.stopPropagation()
+        dragCounterRef.current++
+        setDragOver(true)
+      }}
       onDragOver={e => {
         const hasFolder = e.dataTransfer.types.includes('folderpath') || e.dataTransfer.types.includes('folderPath')
         const hasNota   = e.dataTransfer.types.includes('notaid') || e.dataTransfer.types.includes('notaId')
@@ -113,14 +138,19 @@ function SubpastaTreeNode({
         e.preventDefault()
         e.stopPropagation()
         e.dataTransfer.dropEffect = 'move'
-        setDragOver(true)
       }}
       onDragLeave={e => {
-        if (e.target === e.currentTarget) setDragOver(false)
+        e.stopPropagation()
+        dragCounterRef.current--
+        if (dragCounterRef.current <= 0) {
+          dragCounterRef.current = 0
+          setDragOver(false)
+        }
       }}
       onDrop={e => {
         e.preventDefault()
         e.stopPropagation()
+        dragCounterRef.current = 0
         setDragOver(false)
         const folderPath = e.dataTransfer.getData('folderPath')
         if (folderPath && onMoverCaderno) {
@@ -292,6 +322,7 @@ export function NotesSidebar({
   onMoverCaderno,
   onFolderAction,
   notasPorCaderno = {},
+  subpastasPorCaderno = {},
   onCarregarCaderno,
   width,
   collapsed,
@@ -574,29 +605,49 @@ export function NotesSidebar({
         </div>
       )}
 
-      {/* Árvore unificada */}
+      {/* Árvore unificada — catch-all drop zone: anything not caught by a
+           notebook or subfolder handler lands here = move to vault root.
+           onDragOver allows the drop. onDrop only fires if no child consumed
+           the event via stopPropagation(). */}
       <div
         className={`flex-1 overflow-auto px-2 pb-2 transition-colors ${dragOverRoot ? 'bg-accent/5 dark:bg-accent-dark/5' : ''}`}
         onDragOver={e => {
-          // Root drop zone: só ativa quando o drop é no vazio (não capturado por filho)
-          if (e.target !== e.currentTarget) return
-          if (!e.dataTransfer.types.includes('folderPath') && !e.dataTransfer.types.includes('folderpath')) return
+          const hasFolder = e.dataTransfer.types.includes('folderPath') || e.dataTransfer.types.includes('folderpath')
+          const hasNota = e.dataTransfer.types.includes('notaId') || e.dataTransfer.types.includes('notaid')
+          if (!hasFolder && !hasNota) return
           e.preventDefault()
           e.dataTransfer.dropEffect = 'move'
-          setDragOverRoot(true)
+          if (e.target === e.currentTarget) setDragOverRoot(true)
         }}
         onDragLeave={e => {
           if (e.target === e.currentTarget) setDragOverRoot(false)
         }}
         onDrop={e => {
-          if (e.target !== e.currentTarget) return
           e.preventDefault()
           setDragOverRoot(false)
+
+          // 1. Folder drop → promote to vault root
           const folderPath = e.dataTransfer.getData('folderPath')
           if (folderPath && onMoverCaderno) {
-            // destParent vazio = raiz do vault
             onMoverCaderno(folderPath, '')
+            return
           }
+
+          // 2. Note drop → move note to vault root (caderno = '')
+          const notaId = e.dataTransfer.getData('notaId')
+          if (!notaId || !onMoverNota) return
+          let nota = notas.find(n => n.id === notaId)
+          if (!nota) {
+            for (const cads of Object.values(notasPorCaderno ?? {})) {
+              nota = cads.find(n => n.id === notaId)
+              if (nota) break
+            }
+          }
+          if (!nota) nota = notasRaiz.find(n => n.id === notaId)
+          if (!nota) return
+          // Already at root with no subpasta — no-op
+          if (!nota.caderno && !nota.subpasta) return
+          onMoverNota(nota, '', undefined)
         }}
       >
 
@@ -710,12 +761,45 @@ export function NotesSidebar({
               {/* Filhos: notas em árvore — quando expandido (ativo usa notas prop, outros usam cache) */}
               {isExpanded && (() => {
                 const notasDoCaderno = isAtivo ? notas : (notasPorCaderno[c.nome] ?? [])
-                const tree = buildSubpastaTree(notasDoCaderno)
+                const diskFolders = subpastasPorCaderno[c.nome] || []
+                const tree = buildSubpastaTree(notasDoCaderno, diskFolders)
+
+                // If not loaded yet, trigger background load (prevents stuck "Carregando...")
+                if (!isAtivo && !notasPorCaderno[c.nome] && onCarregarCaderno) {
+                  onCarregarCaderno(c.nome)
+                }
+
                 return (
-                <div className="ml-2 mt-0.5 pl-2 border-l border-bdr-2 dark:border-bdr-dark2 space-y-0.5">
-                  {notasDoCaderno.length === 0 && (
+                <div
+                  className="ml-2 mt-0.5 pl-2 border-l border-bdr-2 dark:border-bdr-dark2 space-y-0.5"
+                  onDrop={e => {
+                    // Catch drops inside expanded notebook area so they don't bubble to root.
+                    // The note should stay in this notebook (drop on notebook header moves it).
+                    e.stopPropagation()
+                    const notaId = e.dataTransfer.getData('notaId')
+                    if (!notaId) return
+                    e.preventDefault()
+                    // Move note to this notebook's root (no subfolder)
+                    let nota = notas.find(n => n.id === notaId)
+                    if (!nota) {
+                      for (const cads of Object.values(notasPorCaderno ?? {})) {
+                        nota = cads.find(n => n.id === notaId)
+                        if (nota) break
+                      }
+                    }
+                    if (!nota) nota = notasRaiz.find(n => n.id === notaId)
+                    if (!nota) return
+                    if (nota.caderno === c.nome && !nota.subpasta) return
+                    onMoverNota(nota, c.nome)
+                  }}
+                  onDragOver={e => {
+                    const hasNota = e.dataTransfer.types.includes('notaId') || e.dataTransfer.types.includes('notaid')
+                    if (hasNota) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }
+                  }}
+                >
+                  {notasDoCaderno.length === 0 && tree.children.size === 0 && (
                     <p className="text-xs text-ink-3 dark:text-ink-dark3 px-2 py-2 text-center opacity-60">
-                      {notasPorCaderno[c.nome] ? 'Nenhuma nota ainda.' : 'Carregando…'}
+                      Nenhuma nota ainda.
                     </p>
                   )}
 

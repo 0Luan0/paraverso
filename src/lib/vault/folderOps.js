@@ -35,35 +35,43 @@ export async function createNotebook(vaultPath, nome) {
 export async function moveNotebook(vaultPath, fromRelPath, toRelPath) {
   const from = (fromRelPath || '').trim().replace(/^[/\\]+|[/\\]+$/g, '')
   const to   = (toRelPath   || '').trim().replace(/^[/\\]+|[/\\]+$/g, '')
-  if (!from || !to) throw new Error('Paths inválidos')
+  // from is required; to can be empty (= promote to vault root)
+  if (!from) throw new Error('Caminho de origem inválido')
   if (from === to) return { from, to, noop: true }
 
   const fromTop = from.split(/[/\\]/)[0]
-  const toTop   = to.split(/[/\\]/)[0]
   if (RESERVED_DIRS.has(fromTop) || MACHINE_DIRS.has(fromTop)) throw new Error(`Pasta reservada não pode ser movida: ${fromTop}`)
-  if (RESERVED_DIRS.has(toTop) || MACHINE_DIRS.has(toTop))   throw new Error(`Destino é pasta reservada: ${toTop}`)
+
+  // Only check destination reserved dirs if destination is not vault root
+  if (to) {
+    const toTop = to.split(/[/\\]/)[0]
+    if (RESERVED_DIRS.has(toTop) || MACHINE_DIRS.has(toTop)) throw new Error(`Destino é pasta reservada: ${toTop}`)
+  }
 
   const tplDir = (getTemplatesDir() || 'templates').toLowerCase()
   if (fromTop.toLowerCase() === tplDir) {
     throw new Error('Pasta de templates não pode ser movida enquanto estiver configurada como tal')
   }
 
-  if (to === from || to.startsWith(from + '/') || to.startsWith(from + '\\')) {
+  // Cycle detection: can't move folder into itself or its children
+  if (to && (to === from || to.startsWith(from + '/') || to.startsWith(from + '\\'))) {
     throw new Error('Não é possível mover uma pasta pra dentro dela mesma')
   }
 
   const fromAbs = await el().joinPath(vaultPath, ...from.split(/[/\\]/))
-  const toAbs   = await el().joinPath(vaultPath, ...to.split(/[/\\]/))
+  const toAbs = to
+    ? await el().joinPath(vaultPath, ...to.split(/[/\\]/))
+    : await el().joinPath(vaultPath, from.split(/[/\\]/).pop()) // promote: use basename at root
 
   if (!(await el().exists(fromAbs))) {
     throw new Error(`Pasta origem não encontrada: ${from}`)
   }
   if (await el().exists(toAbs)) {
-    throw new Error(`Já existe uma pasta em ${to}`)
+    throw new Error(`Já existe uma pasta em ${to || from.split(/[/\\]/).pop()}`)
   }
 
   await el().rename(fromAbs, toAbs)
-  return { from, to, noop: false }
+  return { from, to: to || from.split(/[/\\]/).pop(), noop: false }
 }
 
 const CADERNO_CONFIG_KEYS = ['journalCaderno', 'defaultCaderno', 'templatesDir']

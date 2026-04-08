@@ -24,6 +24,30 @@ export async function getNotesByNotebook(vaultPath, caderno) {
   return notas.sort((a, b) => (b.editadaEm || 0) - (a.editadaEm || 0))
 }
 
+/**
+ * Returns all subfolder paths (relative to the notebook) that exist on disk.
+ * E.g. for notebook "Referências" with subfolder "Livros lidos":
+ *   → ['Livros lidos']
+ * Recursive: "A/B/C" → ['A', 'A/B', 'A/B/C']
+ */
+export async function getSubfolders(vaultPath, caderno) {
+  if (!caderno) return []
+  const results = []
+  async function scan(dirPath, prefix) {
+    const dirs = await el().readdir(dirPath, { dirsOnly: true }).catch(() => [])
+    for (const name of (dirs || [])) {
+      if (name.startsWith('.') || name.startsWith('_')) continue
+      const rel = prefix ? `${prefix}/${name}` : name
+      results.push(rel)
+      const sub = await el().joinPath(dirPath, name)
+      await scan(sub, rel)
+    }
+  }
+  const notebookPath = await el().joinPath(vaultPath, caderno)
+  await scan(notebookPath, '')
+  return results
+}
+
 export async function getAllNotes(vaultPath) {
   const allPaths = await _getAllMdPaths(vaultPath)
   const notas = []

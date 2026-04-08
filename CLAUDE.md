@@ -1,4 +1,4 @@
-# Paraverso — Claude Code Context
+# Luan — Claude Code Context
 
 ## What is it
 Desktop app built with Electron + React called **Paraverso** — a digital notebook inspired by Obsidian.
@@ -78,7 +78,6 @@ Both hemispheres use the same note pipeline (save, delete, move, index). The onl
 
 ## Known tech debt
 - `db/index.js` is a pure passthrough to `vaultFs.js` — 7 files depend on it. Consolidation planned.
-- `NotasTab.jsx` has 1,528 lines — candidate for decomposition.
 
 ## Feature status
 

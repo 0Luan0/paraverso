@@ -94,7 +94,7 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
   noteActionsRef.current = actions
 
   const {
-    notebooks, notes, notesByNotebook, rootNotes,
+    notebooks, notes, notesByNotebook, subfoldersByNotebook, rootNotes,
     loadNotebookNotes, createNote, createNotebook,
     deleteNotebook, deleteNote, updateActiveNote, switchNote,
     handleMoveNote, handleMoveNotebook, handleFolderAction,
@@ -203,12 +203,28 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
     return () => window.removeEventListener('paraverso:vault-changed', handleVaultChanged)
   }, [])
 
+  // Refresh vault data when Notes tab becomes visible (e.g., after editing in Month tab)
+  useEffect(() => {
+    function handleTabVisible() {
+      invalidateIndex()
+      buildVaultIndex()
+      // Reload notes for active notebook + root notes so new files appear
+      if (activeNotebook) {
+        getNotasPorCaderno(activeNotebook).then(lista => setNotes(lista)).catch(() => {})
+      }
+      actions.loadRootNotes()
+    }
+    window.addEventListener('paraverso:notas-visible', handleTabVisible)
+    return () => window.removeEventListener('paraverso:notas-visible', handleTabVisible)
+  }, [activeNotebook]) // eslint-disable-line
+
   // paraverso:nova-nota (Cmd+N)
   useEffect(() => {
     async function handleNewNote() {
       const defaultConfig = (await window.electron?.getConfig('defaultCaderno')) || ''
       const { caderno: defaultCad, subpasta: defaultSub } = splitCadernoPath(defaultConfig)
-      const targetNotebook = defaultCad || activeNotebook || notebooks[0]?.nome || ''
+      // If user hasn't set a default folder, create note at vault root (not active notebook)
+      const targetNotebook = defaultConfig ? defaultCad : ''
       if (targetNotebook && targetNotebook !== activeNotebook) {
         updateTab(() => ({ caderno: targetNotebook }))
       }
@@ -337,6 +353,7 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
         onMoverCaderno={handleMoveNotebook}
         onFolderAction={handleFolderAction}
         notasPorCaderno={notesByNotebook}
+        subpastasPorCaderno={subfoldersByNotebook}
         onCarregarCaderno={loadNotebookNotes}
         width={sidebarWidth}
         collapsed={sidebarCollapsed}
@@ -444,6 +461,26 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
               backlinks={backlinks}
               getSuggestions={getSuggestions}
               onTituloChange={titulo => updateActiveNote({ titulo })}
+              onTituloBlur={async () => {
+                // Flush pending save immediately and commit title rename
+                if (saveTimer.current) {
+                  clearTimeout(saveTimer.current)
+                  saveTimer.current = null
+                  const nota = activeNoteRef.current
+                  if (nota) {
+                    await salvarNota(nota)
+                    invalidateIndex()
+                    // Update notes list with the new _filename from disk
+                    if (nota.caderno) {
+                      const lista = await getNotasPorCaderno(nota.caderno)
+                      setNotes(lista)
+                    } else {
+                      await actions.loadRootNotes()
+                    }
+                  }
+                }
+                if (activeNote?.id) await commitTitleIfNeeded(activeNote.id)
+              }}
               onConteudoChange={markdown => {
                 wasEditedRef.current = true
                 updateActiveNote({ _rawMarkdown: markdown, conteudo: null })

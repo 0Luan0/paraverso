@@ -36,6 +36,13 @@ contextBridge.exposeInMainWorld('electron', {
   showItemInFinder: (targetPath) =>
     ipcRenderer.invoke('shell:showItemInFinder', targetPath),
 
+  // ── Import (read-only access to external folders) ────────────────────────
+  importReaddir: (dirPath, opts) =>
+    ipcRenderer.invoke('import:readdir', dirPath, opts),
+
+  importReadFile: (filePath) =>
+    ipcRenderer.invoke('import:readFile', filePath),
+
   // ── Dialog ───────────────────────────────────────────────────────────────
   openFolder: () =>
     ipcRenderer.invoke('dialog:openFolder'),

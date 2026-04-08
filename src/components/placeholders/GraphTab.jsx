@@ -297,34 +297,32 @@ export function GraphTab({ dark }) {
   const labelGroupsRef = useRef(null) // groups dos labels (pra tick atualizar transform)
   const labelSelRef = useRef(null)    // text.label (pra effect B atualizar font-size/dy)
   const updateLabelVisibilityRef = useRef(null)
-  // Grupos de cor customizáveis (query-based) — per-vault via localStorage key
+  // Grupos de cor customizáveis (query-based) — per-vault via localStorage key.
+  // Each vault gets its own key. New vaults start empty.
   const [grupos, setGrupos] = useState([])
   const gruposKeyRef = useRef('')
+  // Skip persisting during vault load (prevents writing [] when loading a new vault)
+  const gruposLoadedRef = useRef(false)
 
-  // Load vault-specific groups when vault changes
+  // Load vault-specific groups when vault changes.
   useEffect(() => {
     if (!vaultPath) return
+    gruposLoadedRef.current = false // block persist until load completes
     const key = `paraverso-graph-grupos:${vaultPath}`
     gruposKeyRef.current = key
     try {
-      let salvo = localStorage.getItem(key)
-      // Migrate from old global key (pre per-vault) if vault key is empty
-      if (!salvo) {
-        const oldKey = 'paraverso-graph-grupos'
-        const legacy = localStorage.getItem(oldKey)
-        if (legacy) {
-          localStorage.setItem(key, legacy)
-          localStorage.removeItem(oldKey)
-          salvo = legacy
-        }
-      }
+      // Clean up legacy global key if it exists (was copying between vaults)
+      localStorage.removeItem('paraverso-graph-grupos')
+      const salvo = localStorage.getItem(key)
       setGrupos(salvo ? JSON.parse(salvo) : [])
     } catch { setGrupos([]) }
+    // Allow persist on next user-initiated change (after React settles)
+    requestAnimationFrame(() => { gruposLoadedRef.current = true })
   }, [vaultPath])
 
-  // Persist groups to vault-specific localStorage key
+  // Persist groups to vault-specific localStorage key (only after initial load)
   useEffect(() => {
-    if (!gruposKeyRef.current) return
+    if (!gruposKeyRef.current || !gruposLoadedRef.current) return
     try { localStorage.setItem(gruposKeyRef.current, JSON.stringify(grupos)) } catch {}
   }, [grupos])
 

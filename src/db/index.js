@@ -126,6 +126,12 @@ export async function getNotasPorCaderno(caderno) {
   return db.notas.where('caderno').equals(caderno).reverse().sortBy('editadaEm')
 }
 
+/** Returns all subfolder paths on disk for a notebook (including empty ones). */
+export async function getSubfolders(caderno) {
+  if (useVaultFs()) return vault.getSubfolders(_vaultPath, caderno)
+  return []
+}
+
 /** Versão leve: só metadados, sem parsear conteúdo. Para o QuickSwitcher. */
 export async function getTodasNotasMetadata() {
   if (useVaultFs()) return vault.getTodasNotasMetadataVault(_vaultPath)
@@ -195,15 +201,8 @@ export async function getCadernos() {
   if (useVaultFs()) return vault.getCadernosVault(_vaultPath)
 
   const lista = await db.cadernos.orderBy('ordem').toArray()
-  if (lista.length === 0) {
-    const padroes = [
-      { id: crypto.randomUUID(), nome: 'Pensamentos', ordem: 0 },
-      { id: crypto.randomUUID(), nome: 'Leituras',    ordem: 1 },
-      { id: crypto.randomUUID(), nome: 'Projetos',    ordem: 2 },
-    ]
-    await db.cadernos.bulkPut(padroes)
-    return padroes
-  }
+  // No default notebooks — user creates their own structure.
+  // Vault starts with only root-level notes until user creates folders.
   return lista
 }
 

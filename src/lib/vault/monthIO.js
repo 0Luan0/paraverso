@@ -132,7 +132,7 @@ async function migrateIfNeeded(vaultPath, ano, mes) {
 
     // Merge resumo from frontmatter or body
     const resumo = frontmatter.resumo || body?.trim() || ''
-    const habitos = frontmatter.habitos || ['Treino', 'Leitura', 'Foco', 'Bem-estar']
+    const habitos = frontmatter.habitos || []
     const dias = frontmatter.dias || []
     const metas = frontmatter.metas || []
 

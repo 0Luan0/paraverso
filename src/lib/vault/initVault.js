@@ -186,7 +186,7 @@ async function _writeOnboardingNote(vaultPath, caderno, filename, body) {
 }
 
 // ── Vault CLAUDE.md — AI instructions for Claude Code running inside the vault
-// Kept minimal and universal. Power users customize it themselves.
+// Kept minimal and machine-readable. Not a user-facing note.
 
 const VAULT_CLAUDE_MD = `# Vault instructions
 
@@ -194,10 +194,33 @@ const VAULT_CLAUDE_MD = `# Vault instructions
 Write AI-generated notes inside \`_machine/\`. Never modify notes outside \`_machine/\` unless explicitly asked.
 
 ## Wikilinks
-Use \`[[Note Title]]\` when referencing a concept the user likely already has a note about. Don't force links — only when the connection is natural. Don't scan the vault to find titles; just link based on what you know about the user.
+Use \`[[Note Title]]\` when referencing a concept the user likely already has a note about. Don't force links — only when the connection is natural.
 
 ## Tone
 Match the user's writing style. Read a few of their notes before writing.
+`
+
+// ── Machine vault instructions — detailed guide saved inside _machine/ ────────
+
+const MACHINE_VAULT_INSTRUCTIONS = `# Vault instructions
+
+Este arquivo explica como a IA (Claude Code) funciona dentro do seu vault.
+
+## Hemisfério da máquina
+
+A pasta \`_machine/\` é o espaço reservado para a IA. Tudo que o Claude escreve fica aqui por padrão — ele não mexe nas suas notas a menos que você peça explicitamente.
+
+## Wikilinks
+
+O Claude usa \`[[Título da nota]]\` para conectar ideias que existem no seu vault. As conexões aparecem no grafo e nos backlinks, igual a qualquer outra nota.
+
+## Como usar
+
+1. Abra o terminal na pasta do vault
+2. Rode \`claude\` para iniciar uma sessão
+3. Peça o que quiser em linguagem natural
+
+O Claude já sabe ler suas notas e escrever em \`_machine/\`. Quanto mais você usa, mais ele aprende sobre você.
 `
 
 // ── initVault ────────────────────────────────────────────────────────────────
@@ -208,7 +231,7 @@ export async function initVault(vaultPath) {
   // settings (defaultCaderno, journalCaderno, templatesDir) carry over otherwise.
   try {
     await el().setConfig?.('defaultCaderno', '')
-    await el().setConfig?.('journalCaderno', '')
+    await el().setConfig?.('journalCaderno', 'meses')
     await el().setConfig?.('templatesDir', 'templates')
   } catch (err) {
     console.warn('[initVault] Falha ao resetar configs:', err?.message)
@@ -245,11 +268,17 @@ export async function initVault(vaultPath) {
         console.warn('[initVault] Falha ao criar _machine:', err?.message)
       }
 
-      // Write CLAUDE.md — AI instructions for Claude Code in this vault
+      // Write CLAUDE.md at vault root (minimal pointer for Claude Code)
+      // and the full AI instructions inside _machine/
       try {
         const claudeMdPath = await el().joinPath(vaultPath, 'CLAUDE.md')
         if (!(await el().exists(claudeMdPath))) {
           await el().writeFile(claudeMdPath, VAULT_CLAUDE_MD)
+        }
+        // Write detailed vault instructions inside _machine/
+        const machineInstructionsPath = await el().joinPath(vaultPath, '_machine', 'Vault instructions.md')
+        if (!(await el().exists(machineInstructionsPath))) {
+          await _writeOnboardingNote(vaultPath, '_machine', 'Vault instructions', MACHINE_VAULT_INSTRUCTIONS)
         }
       } catch (err) {
         console.warn('[initVault] Falha ao criar CLAUDE.md:', err?.message)

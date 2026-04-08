@@ -259,6 +259,34 @@ function registerIpcHandlers() {
     }
   })
 
+  // ── Import (read-only access to external folders for Obsidian import) ────────
+
+  ipcMain.handle('import:readdir', async (_e, dirPath, opts = {}) => {
+    // Read-only: lists entries in any folder (no vault validation).
+    // Used exclusively by the Obsidian import flow to scan external vaults.
+    try {
+      const dirents = await fsp.readdir(dirPath, { withFileTypes: true })
+      if (opts.dirsOnly) {
+        return dirents
+          .filter(d => d.isDirectory() && !d.name.startsWith('.'))
+          .map(d => d.name)
+      }
+      return dirents.map(d => d.name)
+    } catch {
+      return []
+    }
+  })
+
+  ipcMain.handle('import:readFile', async (_e, filePath) => {
+    // Read-only: reads any file (no vault validation).
+    // Used exclusively by the Obsidian import flow to read external .md files.
+    try {
+      return await fsp.readFile(filePath, 'utf-8')
+    } catch (err) {
+      throw new Error(`import:readFile falhou: ${err.message}`)
+    }
+  })
+
   // ── Dialog ───────────────────────────────────────────────────────────────────
 
   ipcMain.handle('dialog:openFolder', async () => {
