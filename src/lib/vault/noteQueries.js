@@ -118,7 +118,16 @@ export async function getNotesForGraph(vaultPath) {
   return settled.filter(r => r.status === 'fulfilled').map(r => r.value)
 }
 
+// Metadata cache — avoids full rescan on every QuickSwitcher open / index rebuild
+let _metadataCache = { ts: 0, vaultPath: '', result: null }
+const METADATA_TTL = 5000
+
 export async function getAllNotesMetadata(vaultPath) {
+  // Return cached if fresh and same vault
+  if (_metadataCache.result && _metadataCache.vaultPath === vaultPath && Date.now() - _metadataCache.ts < METADATA_TTL) {
+    return _metadataCache.result
+  }
+
   const allPaths = await _getAllMdPaths(vaultPath)
   const notas = []
 
@@ -156,16 +165,29 @@ export async function getAllNotesMetadata(vaultPath) {
       }
     } catch { /* skip */ }
   }
-  return notas.sort((a, b) => (b.editadaEm || 0) - (a.editadaEm || 0))
+  const sorted = notas.sort((a, b) => (b.editadaEm || 0) - (a.editadaEm || 0))
+  _metadataCache = { ts: Date.now(), vaultPath, result: sorted }
+  return sorted
 }
 
-// ── Backlinks ────────────────────────────────────────────────────────────────
+// ── Backlinks (cached with 5-second TTL) ────────────────────────────────────
+
+const _backlinksCache = new Map() // key: titleLower → { ts, result }
+const BACKLINKS_TTL = 5000
+
+/** Clears the backlinks cache. Call after note saves or renames. */
+export function invalidateBacklinksCache() { _backlinksCache.clear() }
 
 export async function getBacklinks(vaultPath, titulo) {
   if (!titulo) return []
+  const tituloLower = titulo.normalize('NFC').toLowerCase()
+
+  // Return cached result if fresh
+  const cached = _backlinksCache.get(tituloLower)
+  if (cached && Date.now() - cached.ts < BACKLINKS_TTL) return cached.result
+
   const allPaths = await _getAllMdPaths(vaultPath)
   const backlinks = []
-  const tituloLower = titulo.normalize('NFC').toLowerCase()
 
   for (const filePath of allPaths) {
     try {
@@ -200,6 +222,7 @@ export async function getBacklinks(vaultPath, titulo) {
       })
     } catch { /* skip corrupt */ }
   }
+  _backlinksCache.set(tituloLower, { ts: Date.now(), result: backlinks })
   return backlinks
 }
 

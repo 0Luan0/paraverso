@@ -46,7 +46,7 @@ export { getNotesByNotebook as getNotasPorCadernoVault } from './vault/noteQueri
 export { getAllNotes as getTodasNotasVault } from './vault/noteQueries.js'
 export { getNotesForGraph as getNotasParaGrafoVault } from './vault/noteQueries.js'
 export { getAllNotesMetadata as getTodasNotasMetadataVault } from './vault/noteQueries.js'
-export { getBacklinks as getBacklinksVault } from './vault/noteQueries.js'
+export { getBacklinks as getBacklinksVault, invalidateBacklinksCache } from './vault/noteQueries.js'
 export { getTemplates as getTemplatesVault } from './vault/noteQueries.js'
 export { readTemplate as lerTemplateVault } from './vault/noteQueries.js'
 

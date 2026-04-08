@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import ContextMenu from '../ui/ContextMenu'
 
 // ── Componentes internos ───────────────────────────────────────────────────────
@@ -19,7 +19,7 @@ function Arrow({ rotated }) {
   )
 }
 
-function NoteItem({ nota, selecionada, onSelect, onDelete, formatarData, compact = false }) {
+const NoteItem = React.memo(function NoteItem({ nota, selecionada, onSelect, onDelete, formatarData, compact = false }) {
   return (
     <div
       draggable
@@ -51,7 +51,7 @@ function NoteItem({ nota, selecionada, onSelect, onDelete, formatarData, compact
       >✕</button>
     </div>
   )
-}
+})
 
 /**
  * Constrói uma árvore a partir de notas flat, usando n.subpasta como path.
@@ -271,7 +271,7 @@ function HemisphereHeader({ label, color, count, collapsed, onToggle }) {
 
 // Purple-styled NoteItem for machine hemisphere — same functionality as NoteItem
 // but with purple accent colors to visually distinguish the AI section.
-function MachineNoteItem({ nota, selecionada, onSelect, onDelete, formatarData, compact = false }) {
+const MachineNoteItem = React.memo(function MachineNoteItem({ nota, selecionada, onSelect, onDelete, formatarData, compact = false }) {
   return (
     <div
       draggable
@@ -302,7 +302,7 @@ function MachineNoteItem({ nota, selecionada, onSelect, onDelete, formatarData, 
       >✕</button>
     </div>
   )
-}
+})
 
 
 export function NotesSidebar({

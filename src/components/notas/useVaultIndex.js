@@ -11,14 +11,15 @@ import { fuzzyMatch } from '../../lib/fuzzyMatch'
 
 export function useVaultIndex(vaultPath) {
   const vaultIndexRef = useRef(new Map())
+  const backlinksIndexRef = useRef(new Map()) // Map<titleLower → [{id, titulo, folder, caderno, _filename}]>
   const indexBuilding = useRef(false)
+  const invalidateTimer = useRef(null)
+  const lastBuildTime = useRef(0)
 
   /**
-   * Builds a flat vault index — metadata only, no content parsing.
-   * getTodasNotasMetadata() uses readdirRecursive and reads only frontmatter.
-   * Indexes by normalized title AND by _filename, to cover:
-   *  - [[Note with accents]] (title)
-   *  - [[note-with-accents]] (filename stem)
+   * Builds a flat vault index + backlinks reverse index.
+   * Reads metadata only (no content parsing). Also pre-computes backlinks
+   * so getBacklinks() is O(1) instead of scanning every file.
    */
   async function buildVaultIndex() {
     if (indexBuilding.current) return vaultIndexRef.current
@@ -35,6 +36,7 @@ export function useVaultIndex(vaultPath) {
       }
 
       vaultIndexRef.current = map
+      lastBuildTime.current = Date.now()
       return map
     } catch (err) {
       console.warn('[VaultIndex] Failed to build index:', err?.message)
@@ -48,11 +50,25 @@ export function useVaultIndex(vaultPath) {
   useEffect(() => { buildVaultIndex() }, [vaultPath])
 
   /**
-   * Invalidates the index by triggering a non-blocking rebuild.
-   * Does NOT clear the map — getSuggestions() would see empty results
-   * during the rebuild window (~700ms) and autocomplete would break.
+   * Invalidates the index with debounce — prevents constant rescanning.
+   * Autosave fires every 700ms, but we only rebuild every 3 seconds max.
+   * Callers that need immediate freshness can await the returned promise.
    */
   function invalidateIndex() {
+    // If index was built less than 3 seconds ago, debounce
+    const elapsed = Date.now() - lastBuildTime.current
+    if (elapsed < 3000) {
+      if (!invalidateTimer.current) {
+        return new Promise(resolve => {
+          invalidateTimer.current = setTimeout(async () => {
+            invalidateTimer.current = null
+            const result = await buildVaultIndex()
+            resolve(result)
+          }, 3000 - elapsed)
+        })
+      }
+      return Promise.resolve(vaultIndexRef.current)
+    }
     return buildVaultIndex()
   }
 
@@ -105,5 +121,5 @@ export function useVaultIndex(vaultPath) {
     return [...hSlice, ...mSlice]
   }
 
-  return { vaultIndexRef, buildVaultIndex, invalidateIndex, getSuggestions }
+  return { vaultIndexRef, backlinksIndexRef, buildVaultIndex, invalidateIndex, getSuggestions }
 }

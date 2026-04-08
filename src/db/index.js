@@ -100,7 +100,11 @@ export async function getNota(id) {
 
 export async function salvarNota(nota) {
   nota.editadaEm = Date.now()
-  if (useVaultFs()) return vault.salvarNotaVault(_vaultPath, nota)
+  if (useVaultFs()) {
+    const result = await vault.salvarNotaVault(_vaultPath, nota)
+    vault.invalidateBacklinksCache()
+    return result
+  }
   await db.notas.put(nota)
 }
 
