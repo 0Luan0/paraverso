@@ -507,9 +507,6 @@ export function NotesSidebar({
       style={{ width: `${width}px` }}
       className="relative flex-shrink-0 bg-surface dark:bg-surface-dark flex flex-col overflow-hidden"
     >
-      {/* Espaço para traffic lights do macOS */}
-      {window.electron && <div style={{ height: '36px', flexShrink: 0, WebkitAppRegion: 'drag' }} />}
-
       {/* Header */}
       <div className="flex items-center justify-between px-3 pt-1 pb-2">
         <HemisphereHeader
@@ -519,20 +516,20 @@ export function NotesSidebar({
           collapsed={humanCollapsed}
           onToggle={toggleHuman}
         />
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => { setBuscaAberta(b => !b); if (buscaAberta) { setQueryBusca(''); setResultadosBusca([]) } }}
-            className={`text-xs transition-colors ${buscaAberta ? 'text-accent dark:text-accent-dark' : 'text-ink-3 dark:text-ink-dark3 hover:text-accent dark:hover:text-accent-dark'}`}
+            className={`p-1 rounded transition-colors ${buscaAberta ? 'text-accent dark:text-accent-dark' : 'text-ink-3 dark:text-ink-dark3 hover:text-accent dark:hover:text-accent-dark'}`}
             title="Buscar notas"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
           </button>
           <button
             onClick={() => { if (onNovaNotaRaiz) onNovaNotaRaiz() }}
-            className="text-xs text-ink-3 dark:text-ink-dark3 hover:text-accent dark:hover:text-accent-dark transition-colors"
-            title="Nova nota avulsa (raiz do vault)"
+            className="p-1 rounded text-ink-3 dark:text-ink-dark3 hover:text-accent dark:hover:text-accent-dark transition-colors"
+            title="Nova nota (raiz do vault)"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
               <polyline points="14 2 14 8 20 8"/>
               <line x1="12" y1="18" x2="12" y2="12"/>
@@ -541,15 +538,63 @@ export function NotesSidebar({
           </button>
           <button
             onClick={() => setNovoCadernoMode(true)}
-            className="text-xs text-ink-3 dark:text-ink-dark3 hover:text-accent dark:hover:text-accent-dark transition-colors"
-            title="Novo caderno"
-          >+</button>
+            className="p-1 rounded text-ink-3 dark:text-ink-dark3 hover:text-accent dark:hover:text-accent-dark transition-colors"
+            title="Nova pasta"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              <line x1="12" y1="11" x2="12" y2="17"/>
+              <line x1="9" y1="14" x2="15" y2="14"/>
+            </svg>
+          </button>
+          {/* Expand/collapse all folders toggle */}
+          <button
+            onClick={() => {
+              if (expandedCadernos.size > 0 || expandedSubpastas.size > 0) {
+                // Collapse all
+                setExpandedCadernos(new Set())
+                setExpandedSubpastas(new Set())
+              } else {
+                // Expand all top-level folders
+                const allNames = new Set(cadernos.map(c => c.nome))
+                setExpandedCadernos(allNames)
+                // Load notes for each expanded folder
+                for (const c of cadernos) {
+                  if (onCarregarCaderno) onCarregarCaderno(c.nome)
+                }
+              }
+            }}
+            className="p-1 rounded text-ink-3 dark:text-ink-dark3 hover:text-accent dark:hover:text-accent-dark transition-colors"
+            title={expandedCadernos.size > 0 ? 'Recolher todas as pastas' : 'Expandir todas as pastas'}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              {expandedCadernos.size > 0 ? (
+                <>{/* Collapse icon: chevrons pointing inward */}
+                  <polyline points="7 3 7 10 17 10 17 3" />
+                  <polyline points="4 7 7 10 10 7" />
+                  <polyline points="14 7 17 10 20 7" />
+                  <polyline points="7 21 7 14 17 14 17 21" />
+                  <polyline points="4 17 7 14 10 17" />
+                  <polyline points="14 17 17 14 20 17" />
+                </>
+              ) : (
+                <>{/* Expand icon: chevrons pointing outward */}
+                  <polyline points="7 8 7 3 17 3 17 8" />
+                  <polyline points="4 3 7 6 10 3" />
+                  <polyline points="14 3 17 6 20 3" />
+                  <polyline points="7 16 7 21 17 21 17 16" />
+                  <polyline points="4 21 7 18 10 21" />
+                  <polyline points="14 21 17 18 20 21" />
+                </>
+              )}
+            </svg>
+          </button>
           <button
             onClick={toggleCollapsed}
-            className="p-0.5 rounded hover:bg-bg-2 dark:hover:bg-bg-dark2 text-ink-3 dark:text-ink-dark3 hover:text-ink dark:hover:text-ink-dark transition-colors"
+            className="p-1 rounded hover:bg-bg-2 dark:hover:bg-bg-dark2 text-ink-3 dark:text-ink-dark3 hover:text-ink dark:hover:text-ink-dark transition-colors"
             title="Recolher sidebar"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="15 18 9 12 15 6" />
             </svg>
           </button>
