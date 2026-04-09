@@ -280,7 +280,25 @@ export function GraphTab({ dark }) {
   const [config, setConfig] = useState(DEFAULT_CONFIG)
   const [configOpen, setConfigOpen] = useState(false)
   const [openSections, setOpenSections] = useState({ grupos: true })
+  const configLoadedRef = useRef(false)
   const updateConfig = (key, val) => setConfig(prev => ({ ...prev, [key]: val }))
+
+  // Load graph config from localStorage (per-vault)
+  useEffect(() => {
+    if (!vaultPath) return
+    configLoadedRef.current = false
+    try {
+      const saved = localStorage.getItem(`paraverso-graph-config:${vaultPath}`)
+      if (saved) setConfig(prev => ({ ...prev, ...JSON.parse(saved) }))
+    } catch { /* use defaults */ }
+    requestAnimationFrame(() => { configLoadedRef.current = true })
+  }, [vaultPath])
+
+  // Persist graph config on change (skip initial load)
+  useEffect(() => {
+    if (!vaultPath || !configLoadedRef.current) return
+    try { localStorage.setItem(`paraverso-graph-config:${vaultPath}`, JSON.stringify(config)) } catch {}
+  }, [config, vaultPath])
 
   const containerRef = useRef(null)
   const svgRef = useRef(null)

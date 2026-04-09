@@ -19,12 +19,11 @@ function Arrow({ rotated }) {
   )
 }
 
-const NoteItem = React.memo(function NoteItem({ nota, selecionada, onSelect, onDelete, formatarData, compact = false }) {
+const NoteItem = React.memo(function NoteItem({ nota, selecionada, onSelect, onDelete, onOpenInSplit, formatarData, compact = false }) {
   return (
     <div
       draggable
       onDragStart={e => {
-        console.debug('[DRAG] iniciando:', { id: nota.id, titulo: nota.titulo, caderno: nota.caderno, _filename: nota._filename })
         e.dataTransfer.setData('notaId', nota.id)
         e.dataTransfer.setData('notaCaderno', nota.caderno || '')
         e.dataTransfer.effectAllowed = 'move'
@@ -36,7 +35,11 @@ const NoteItem = React.memo(function NoteItem({ nota, selecionada, onSelect, onD
           ? 'bg-accent/10 dark:bg-accent-dark/10'
           : 'hover:bg-bg-2 dark:hover:bg-bg-dark2'
       }`}
-      onClick={() => onSelect(nota)}
+      onClick={e => {
+        // Alt+Click → open in split pane (like Obsidian)
+        if (e.altKey && onOpenInSplit) { onOpenInSplit(nota); return }
+        onSelect(nota)
+      }}
     >
       <span className={`${compact ? 'w-0.5 h-0.5' : 'w-1 h-1'} rounded-full bg-ink-3 dark:bg-ink-dark3 flex-shrink-0 opacity-40`} />
       <div className="flex-1 min-w-0">
@@ -107,7 +110,7 @@ function contarNotasTree(node) {
 function SubpastaTreeNode({
   nome, node, cadernoPai, pathPrefix,
   expandedSubpastas, toggleSubpasta,
-  notaSelecionada, onSelect, onDelete, formatarData,
+  notaSelecionada, onSelect, onDelete, onOpenInSplit, formatarData,
   onMoverCaderno, onMoverNota, onContextMenu,
   notas, notasPorCaderno, notasRaiz,
 }) {
@@ -203,6 +206,7 @@ function SubpastaTreeNode({
               selecionada={notaSelecionada?.id === n.id}
               onSelect={onSelect}
               onDelete={onDelete}
+              onOpenInSplit={onOpenInSplit}
               formatarData={formatarData}
             />
           ))}
@@ -221,6 +225,7 @@ function SubpastaTreeNode({
                 notaSelecionada={notaSelecionada}
                 onSelect={onSelect}
                 onDelete={onDelete}
+                onOpenInSplit={onOpenInSplit}
                 formatarData={formatarData}
                 onMoverCaderno={onMoverCaderno}
                 onMoverNota={onMoverNota}
@@ -313,6 +318,7 @@ export function NotesSidebar({
   setCaderno,
   notaSelecionada,
   setNotaSelecionada,
+  onOpenInSplit,
   onNovaNota,
   onNovaNotaRaiz,
   onNovoCaderno,
@@ -482,7 +488,7 @@ export function NotesSidebar({
         className="relative flex-shrink-0 flex flex-col items-center bg-surface dark:bg-surface-dark overflow-hidden"
       >
         {/* Espaço para traffic lights do macOS */}
-        {window.electron && <div style={{ height: '36px', flexShrink: 0, WebkitAppRegion: 'drag' }} />}
+        {/* Titlebar space handled by App.jsx global drag region */}
         <button
           onClick={toggleCollapsed}
           className="p-1 rounded hover:bg-bg-2 dark:hover:bg-bg-dark2 text-ink-3 dark:text-ink-dark3 hover:text-ink dark:hover:text-ink-dark transition-colors"
@@ -811,6 +817,7 @@ export function NotesSidebar({
                       selecionada={notaSelecionada?.id === n.id}
                       onSelect={setNotaSelecionada}
                       onDelete={onDeletarNota}
+                      onOpenInSplit={onOpenInSplit}
                       formatarData={formatarData}
                     />
                   ))}
@@ -830,6 +837,7 @@ export function NotesSidebar({
                         notaSelecionada={notaSelecionada}
                         onSelect={setNotaSelecionada}
                         onDelete={onDeletarNota}
+                        onOpenInSplit={onOpenInSplit}
                         formatarData={formatarData}
                         onMoverCaderno={onMoverCaderno}
                         onMoverNota={onMoverNota}
@@ -855,6 +863,7 @@ export function NotesSidebar({
                 selecionada={notaSelecionada?.id === n.id}
                 onSelect={setNotaSelecionada}
                 onDelete={onDeletarNota}
+                onOpenInSplit={onOpenInSplit}
                 formatarData={formatarData}
                 compact
               />
@@ -929,6 +938,7 @@ export function NotesSidebar({
                     notaSelecionada={notaSelecionada}
                     onSelect={setNotaSelecionada}
                     onDelete={onDeletarNota}
+                    onOpenInSplit={onOpenInSplit}
                     formatarData={formatarData}
                     onMoverCaderno={onMoverCaderno}
                     onMoverNota={onMoverNota}

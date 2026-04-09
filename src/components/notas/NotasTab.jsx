@@ -105,12 +105,78 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
   // Wire up commitTitleIfNeeded ref for other hooks
   commitTitleIfNeededRef.current = commitTitleIfNeeded
 
-  // Editor refs
+  // Editor refs (main pane)
   const editorRef = useRef(null)
   const cmViewRef = useRef(null)
   const [outlineOpen, setOutlineOpen] = useState(false)
   const { width: sidebarWidth, collapsed: sidebarCollapsed, toggleCollapsed: toggleSidebar, onResizeStart: onSidebarResize } = useSidebarResize()
   const [showTemplates, setShowTemplates] = useState(false)
+
+  // Split pane (second editor, side by side)
+  const [splitNote, setSplitNote] = useState(null)
+  const [splitBacklinks, setSplitBacklinks] = useState([])
+  const splitEditorRef = useRef(null)
+  const splitCmViewRef = useRef(null)
+  const [splitNavKey, setSplitNavKey] = useState(0)
+  const [splitOutlineOpen, setSplitOutlineOpen] = useState(false)
+  const splitOpen = !!splitNote
+  const isDraggingSplitRef = useRef(false)
+  const [splitWidth, setSplitWidth] = useState(() => {
+    const saved = localStorage.getItem('paraverso-split-width')
+    return saved ? parseInt(saved, 10) : 50
+  })
+
+  // Open a note in the split pane
+  function openInSplit(nota) {
+    setSplitNote(nota)
+    setSplitNavKey(k => k + 1)
+  }
+
+  // Close split pane
+  function closeSplit() {
+    setSplitNote(null)
+  }
+
+  // Split resize handler (same pattern as BrowserPane)
+  function handleSplitResizeStart(e) {
+    e.preventDefault()
+    isDraggingSplitRef.current = true
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const container = e.currentTarget.parentElement
+    const onMove = (moveEvent) => {
+      if (!isDraggingSplitRef.current || !container) return
+      const rect = container.getBoundingClientRect()
+      const pct = ((moveEvent.clientX - rect.left) / rect.width) * 100
+      setSplitWidth(Math.max(25, Math.min(75, pct)))
+    }
+    const onUp = () => {
+      isDraggingSplitRef.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      setSplitWidth(w => {
+        localStorage.setItem('paraverso-split-width', String(Math.round(w)))
+        return w
+      })
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+
+  // Load backlinks for split note
+  useEffect(() => {
+    if (!splitNote?.titulo) { setSplitBacklinks([]); return }
+    let cancelled = false
+    getBacklinks(splitNote.titulo)
+      .then(bls => {
+        if (!cancelled) setSplitBacklinks(bls.filter(b => b._filename !== splitNote._filename && b.id !== splitNote.id))
+      })
+      .catch(() => { if (!cancelled) setSplitBacklinks([]) })
+    return () => { cancelled = true }
+  }, [splitNote?.id, splitNote?.titulo]) // eslint-disable-line
 
   // ── Notify active note to other components (GraphTab) ──────────────────────
   useEffect(() => { onNotaAtiva?.(activeNote?.id ?? null) }, [activeNote?.id]) // eslint-disable-line
@@ -346,6 +412,7 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
         setCaderno={c => updateTab(() => ({ caderno: c, nota: null }))}
         notaSelecionada={activeNote}
         setNotaSelecionada={switchNote}
+        onOpenInSplit={openInSplit}
         onNovaNota={() => createNote(undefined, activeNotebook || '')}
         onNovaNotaRaiz={() => createNote(undefined, '')}
         onNovoCaderno={createNotebook}
@@ -451,45 +518,101 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
           </div>
         </div>
 
-        {/* Editor + Outline */}
+        {/* Editor area — split-capable */}
         {activeNote ? (
           <div className="flex-1 flex min-w-0 overflow-hidden">
-            <NoteEditorCM
-              key={navKey}
-              nota={activeNote}
-              textura={textura}
-              editorRef={editorRef}
-              cmViewRef={cmViewRef}
-              backlinks={backlinks}
-              getSuggestions={getSuggestions}
-              onTituloChange={titulo => updateActiveNote({ titulo })}
-              onTituloBlur={async () => {
-                // Flush pending save immediately and commit title rename
-                if (saveTimer.current) {
-                  clearTimeout(saveTimer.current)
-                  saveTimer.current = null
-                  const nota = activeNoteRef.current
-                  if (nota) {
-                    await salvarNota(nota)
-                    invalidateIndex()
-                    // Update notes list with the new _filename from disk
-                    if (nota.caderno) {
-                      const lista = await getNotasPorCaderno(nota.caderno)
-                      setNotes(lista)
-                    } else {
-                      await actions.loadRootNotes()
+            {/* Left pane (main editor) */}
+            <div className="flex-1 flex flex-col min-w-0 overflow-hidden" style={splitOpen ? { flexBasis: `${splitWidth}%`, flexGrow: 0 } : undefined}>
+              <NoteEditorCM
+                key={navKey}
+                nota={activeNote}
+                textura={textura}
+                editorRef={editorRef}
+                cmViewRef={cmViewRef}
+                backlinks={backlinks}
+                getSuggestions={getSuggestions}
+                onTituloChange={titulo => updateActiveNote({ titulo })}
+                onTituloBlur={async () => {
+                  if (saveTimer.current) {
+                    clearTimeout(saveTimer.current)
+                    saveTimer.current = null
+                    const nota = activeNoteRef.current
+                    if (nota) {
+                      await salvarNota(nota)
+                      invalidateIndex()
+                      if (nota.caderno) {
+                        const lista = await getNotasPorCaderno(nota.caderno)
+                        setNotes(lista)
+                      } else {
+                        await actions.loadRootNotes()
+                      }
                     }
                   }
-                }
-                if (activeNote?.id) await commitTitleIfNeeded(activeNote.id)
-              }}
-              onConteudoChange={markdown => {
-                wasEditedRef.current = true
-                updateActiveNote({ _rawMarkdown: markdown, conteudo: null })
-              }}
-              onWikiLinkClick={handleWikilinkClick}
-            />
-            <OutlinePanel cmViewRef={cmViewRef} isOpen={outlineOpen} />
+                  if (activeNote?.id) await commitTitleIfNeeded(activeNote.id)
+                }}
+                onConteudoChange={markdown => {
+                  wasEditedRef.current = true
+                  updateActiveNote({ _rawMarkdown: markdown, conteudo: null })
+                }}
+                onWikiLinkClick={handleWikilinkClick}
+              />
+              <OutlinePanel cmViewRef={cmViewRef} isOpen={outlineOpen} />
+            </div>
+
+            {/* Split resize handle + right pane */}
+            {splitOpen && (
+              <>
+                <div
+                  onMouseDown={handleSplitResizeStart}
+                  style={{ width: 4, cursor: 'col-resize', background: '#2a2a2a', flexShrink: 0, borderLeft: '1px solid #333', borderRight: '1px solid #333' }}
+                />
+                <div className="flex-1 flex flex-col min-w-0 overflow-hidden" style={{ flexBasis: `${100 - splitWidth}%`, flexGrow: 0 }}>
+                  {/* Split pane header */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', borderBottom: '1px solid #2a2a2a', flexShrink: 0 }}>
+                    <span style={{ fontSize: 11, color: '#4a4a4a', userSelect: 'none' }}>
+                      {(splitNote.folder || splitNote.caderno) && <>{(splitNote.folder || splitNote.caderno).replace(/\//g, ' / ')}  /  </>}
+                      {splitNote.titulo}
+                    </span>
+                    <button
+                      onClick={closeSplit}
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#4a4a4a', fontSize: 14, padding: '0 4px' }}
+                      onMouseEnter={e => { e.currentTarget.style.color = '#e4e4e4' }}
+                      onMouseLeave={e => { e.currentTarget.style.color = '#4a4a4a' }}
+                      title="Fechar painel"
+                    >✕</button>
+                  </div>
+                  <NoteEditorCM
+                    key={splitNavKey}
+                    nota={splitNote}
+                    textura={textura}
+                    editorRef={splitEditorRef}
+                    cmViewRef={splitCmViewRef}
+                    backlinks={splitBacklinks}
+                    getSuggestions={getSuggestions}
+                    onTituloChange={() => {}}
+                    onTituloBlur={() => {}}
+                    onConteudoChange={markdown => {
+                      // Save split pane changes directly (no autosave timer sharing)
+                      const updated = { ...splitNote, _rawMarkdown: markdown, conteudo: null, editadaEm: Date.now() }
+                      setSplitNote(updated)
+                      salvarNota(updated).catch(e => console.error('[Split save]', e))
+                    }}
+                    onWikiLinkClick={titulo => {
+                      // Clicking a wikilink in split pane opens it in split
+                      const key = titulo.split('|')[0].trim().normalize('NFC').toLowerCase()
+                      const meta = vaultIndexRef.current.get(key)
+                      if (meta) {
+                        getNotasPorCaderno(meta.caderno || '').then(lista => {
+                          const full = lista.find(n => n.id === meta.id || n._filename === meta._filename)
+                          if (full) openInSplit(full)
+                        })
+                      }
+                    }}
+                  />
+                  <OutlinePanel cmViewRef={splitCmViewRef} isOpen={splitOutlineOpen} />
+                </div>
+              </>
+            )}
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-3">

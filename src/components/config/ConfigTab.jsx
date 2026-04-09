@@ -846,8 +846,10 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
                 onChange={e => salvarTemplatesDir(e.target.value)}
                 className="flex-1 bg-bg dark:bg-bg-dark border border-bdr dark:border-bdr-dark rounded-lg px-3 py-2 text-sm text-ink dark:text-ink-dark focus:outline-none focus:border-accent dark:focus:border-accent-dark transition-colors"
               >
+                {/* Always show 'templates' as first option */}
+                {!topDirs.includes('templates') && <option value="templates">templates (padrão)</option>}
                 {topDirs.map(d => (
-                  <option key={d} value={d}>{d}</option>
+                  <option key={d} value={d}>{d}{d === 'templates' ? ' (padrão)' : ''}</option>
                 ))}
               </select>
             ) : (

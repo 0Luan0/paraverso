@@ -255,7 +255,17 @@ function AppInner() {
   }
 
   return (
-    <div className="h-screen flex overflow-hidden" style={{ background: '#1a1a1a' }}>
+    <div className="h-screen flex flex-col overflow-hidden" style={{ background: '#1a1a1a' }}>
+      {/* macOS titlebar drag region — spans full width, reserves space for traffic lights */}
+      {window.electron && (
+        <div style={{
+          height: 36,
+          flexShrink: 0,
+          WebkitAppRegion: 'drag',
+          zIndex: 50,
+        }} />
+      )}
+
       {/* Quick Switcher overlay (Cmd+O) */}
       {quickSwitcher && (
         <QuickSwitcher
@@ -264,6 +274,9 @@ function AppInner() {
           vaultPath={vaultPath}
         />
       )}
+
+      {/* Main layout: Activity bar + content */}
+      <div className="flex-1 flex overflow-hidden min-h-0">
 
       {/* Activity bar — coluna esquerda, 32px */}
       <ActivityBar
@@ -331,6 +344,8 @@ function AppInner() {
           </>
         )}
       </div>
+
+      </div> {/* close Main layout flex */}
 
       {/* Toasts (machine + genérico) */}
       <div style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 1000 }}>
