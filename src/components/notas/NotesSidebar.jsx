@@ -507,16 +507,8 @@ export function NotesSidebar({
       style={{ width: `${width}px` }}
       className="relative flex-shrink-0 bg-surface dark:bg-surface-dark flex flex-col overflow-hidden"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 pt-1 pb-2">
-        <HemisphereHeader
-          label="Humano"
-          color={HUMAN_COLOR}
-          count={Object.values(notasPorCaderno).flat().length || notas.length}
-          collapsed={humanCollapsed}
-          onToggle={toggleHuman}
-        />
-        <div className="flex items-center gap-2">
+      {/* Toolbar — centered above hemisphere headers */}
+      <div className="flex items-center justify-center px-3 pt-1 pb-1 gap-3">
           <button
             onClick={() => { setBuscaAberta(b => !b); if (buscaAberta) { setQueryBusca(''); setResultadosBusca([]) } }}
             className={`p-1 rounded transition-colors ${buscaAberta ? 'text-accent dark:text-accent-dark' : 'text-ink-3 dark:text-ink-dark3 hover:text-accent dark:hover:text-accent-dark'}`}
@@ -598,7 +590,17 @@ export function NotesSidebar({
               <polyline points="15 18 9 12 15 6" />
             </svg>
           </button>
-        </div>
+      </div>
+
+      {/* Hemisphere header */}
+      <div className="px-3 pb-1">
+        <HemisphereHeader
+          label="Humano"
+          color={HUMAN_COLOR}
+          count={Object.values(notasPorCaderno).flat().length || notas.length}
+          collapsed={humanCollapsed}
+          onToggle={toggleHuman}
+        />
       </div>
 
       {/* Busca inline (inside human hemisphere) */}
