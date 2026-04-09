@@ -187,8 +187,14 @@ export function useNoteActions({
     await salvarNota(nota)
     invalidateIndex()
     if (notebook) {
-      const updated = await getNotasPorCaderno(notebook)
+      const [updated, folders] = await Promise.all([
+        getNotasPorCaderno(notebook),
+        getSubfolders(notebook),
+      ])
       setNotes(updated)
+      // Also update cache so sidebar shows note even in non-active notebooks
+      setNotesByNotebook(prev => ({ ...prev, [notebook]: updated }))
+      setSubfoldersByNotebook(prev => ({ ...prev, [notebook]: folders }))
     } else {
       await loadRootNotes()
     }
@@ -227,7 +233,10 @@ export function useNoteActions({
     setSubfoldersByNotebook({})
     await loadRootNotes()
     const reloads = []
-    if (activeNotebook) reloads.push(getNotasPorCaderno(activeNotebook))
+    if (activeNotebook) {
+      reloads.push(getNotasPorCaderno(activeNotebook))
+      reloads.push(getSubfolders(activeNotebook).then(folders => setSubfoldersByNotebook(prev => ({ ...prev, [activeNotebook]: folders }))))
+    }
     reloads.push(getNotasPorCaderno('_machine').then(lista => setNotesByNotebook(prev => ({ ...prev, _machine: lista }))))
     const [lista] = await Promise.all(reloads)
     if (activeNotebook && lista) setNotes(lista)
@@ -296,7 +305,7 @@ export function useNoteActions({
       await moverNota(nota, newFolder || '')
       setNotes(prev => prev.filter(n => n.id !== nota.id))
 
-      // Refresh source and target top-level folder caches
+      // Refresh source and target top-level folder caches (notes + subfolders)
       setNotesByNotebook(prev => {
         const next = { ...prev }
         if (sourceTop) delete next[sourceTop]
@@ -304,11 +313,10 @@ export function useNoteActions({
         return next
       })
       const reloads = []
-      if (sourceTop) {
-        reloads.push(getNotasPorCaderno(sourceTop).then(lista => setNotesByNotebook(prev => ({ ...prev, [sourceTop]: lista }))).catch(() => {}))
-      }
-      if (targetTop) {
-        reloads.push(getNotasPorCaderno(targetTop).then(lista => setNotesByNotebook(prev => ({ ...prev, [targetTop]: lista }))).catch(() => {}))
+      const affectedTops = new Set([sourceTop, targetTop].filter(Boolean))
+      for (const top of affectedTops) {
+        reloads.push(getNotasPorCaderno(top).then(lista => setNotesByNotebook(prev => ({ ...prev, [top]: lista }))).catch(() => {}))
+        reloads.push(getSubfolders(top).then(folders => setSubfoldersByNotebook(prev => ({ ...prev, [top]: folders }))).catch(() => {}))
       }
       await Promise.all(reloads)
 
@@ -376,8 +384,12 @@ export function useNoteActions({
       if (topActive === topFrom && !newNotebooks.find(c => c.nome === activeNotebook)) {
         updateTab(() => ({ caderno: newNotebooks[0]?.nome || '', nota: null }))
       } else if (activeNotebook) {
-        const lista = await getNotasPorCaderno(activeNotebook)
+        const [lista, folders] = await Promise.all([
+          getNotasPorCaderno(activeNotebook),
+          getSubfolders(activeNotebook),
+        ])
         setNotes(lista)
+        setSubfoldersByNotebook(prev => ({ ...prev, [activeNotebook]: folders }))
       }
 
       window.dispatchEvent(new CustomEvent('paraverso:toast', {
