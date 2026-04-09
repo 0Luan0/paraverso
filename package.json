@@ -59,9 +59,12 @@
     "vitest": "^4.1.2",
     "wait-on": "^8.0.3"
   },
+  "description": "Digital notebook for personal knowledge management",
+  "author": "Luan Lucena",
   "build": {
     "appId": "com.paraverso.app",
     "productName": "Paraverso",
+    "afterPack": "./electron/afterPack.cjs",
     "directories": {
       "output": "dist-electron"
     },
@@ -71,7 +74,11 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
-      "target": "dmg"
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "identity": null
     }
   }
 }
