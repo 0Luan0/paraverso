@@ -256,12 +256,13 @@ function AppInner() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden" style={{ background: '#1a1a1a' }}>
-      {/* macOS titlebar drag region — spans full width, reserves space for traffic lights */}
+      {/* macOS titlebar drag region — matches ActivityBar background (#181818) */}
       {window.electron && (
         <div style={{
           height: 36,
           flexShrink: 0,
           WebkitAppRegion: 'drag',
+          background: '#181818',
           zIndex: 50,
         }} />
       )}
