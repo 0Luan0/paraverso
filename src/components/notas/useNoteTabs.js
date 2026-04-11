@@ -64,7 +64,9 @@ export function useNoteTabs({
     // propagate [[]] through the vault. Fire-and-forget.
     const previousId = activeNoteRef.current?.id
     if (previousId && previousId !== nota.id) {
-      commitTitleIfNeeded(previousId).catch(() => {})
+      commitTitleIfNeeded(previousId).catch(err => {
+        console.warn('[useNoteTabs.commitTitleOnLeave]', err?.message)
+      })
     }
 
     // Record the current title of the new note as "committed" for future comparison

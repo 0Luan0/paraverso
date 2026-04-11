@@ -2,6 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Content-Security-Policy — enforced by Electron at document level.
+      'self' resolves to http://localhost:5173 in dev and file:// in prod.
+      Notes:
+        - 'unsafe-inline' in style-src is required by CodeMirror dynamic style injection.
+        - ws://localhost:* is for Vite HMR.
+        - attachment: lets images served by the custom protocol render.
+        - connect-src https: allows the embedded browser scrape handler (runs in main,
+          but XHR fallbacks from renderer may still use it).
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: attachment:; font-src 'self' data:; connect-src 'self' https: http://localhost:* ws://localhost:*; media-src 'self' attachment: blob:; frame-src 'self' https: http:; object-src 'none'; base-uri 'self';" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>paraverso</title>

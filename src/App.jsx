@@ -148,7 +148,9 @@ function AppInner() {
   useEffect(() => {
     if (!vaultPath || !window.electron?.machineContext?.watch) return
     // Init _machine/ structure (creates contexts/, templates/ and default files if missing)
-    window.electron.machineContext.init(vaultPath).catch(() => {})
+    window.electron.machineContext.init(vaultPath).catch(err => {
+      console.warn('[App.machineContext.init]', err?.message)
+    })
     const machinePath = vaultPath + '/_machine'
     window.electron.machineContext.watch(machinePath)
 

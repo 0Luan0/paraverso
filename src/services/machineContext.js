@@ -234,10 +234,12 @@ export async function loadContextForCommand(command, vaultPath) {
 
   let pessoa = '', interesses = '', estilo = '', template = ''
 
-  try { pessoa = await el().machineContext.readContext(pessoaPath) } catch {}
-  try { interesses = await el().machineContext.readContext(interessesPath) } catch {}
-  try { estilo = await el().machineContext.readContext(estiloPath) } catch {}
-  try { template = await el().machineContext.readContext(templatePath) } catch {}
+  // Optional context files — if absent, section stays empty in the prompt.
+  // Silence is intentional: first-run users have no contexts yet.
+  try { pessoa = await el().machineContext.readContext(pessoaPath) } catch { /* optional */ }
+  try { interesses = await el().machineContext.readContext(interessesPath) } catch { /* optional */ }
+  try { estilo = await el().machineContext.readContext(estiloPath) } catch { /* optional */ }
+  try { template = await el().machineContext.readContext(templatePath) } catch { /* optional */ }
 
   return [
     '--- CONTEXTO DA PESSOA ---',

@@ -6,6 +6,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
 import { autocompletion } from '@codemirror/autocomplete'
 import { HighlightStyle, syntaxHighlighting, syntaxTree, foldService, codeFolding, foldGutter, foldKeymap } from '@codemirror/language'
+import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import { tags } from '@lezer/highlight'
 import { useVault } from '../../contexts/VaultContext'
 import { gerarNomeAnexo, extDeMimeType } from '../../lib/attachments'
@@ -250,6 +251,103 @@ const wikilinkKeymap = keymap.of([
       return false
     },
   },
+])
+
+// ── Toggle markdown formatting (Cmd+B bold, Cmd+I italic) ──────────────────
+// Reusable helper: wraps/unwraps selection with a marker string (e.g. ** or *)
+function toggleMarker(view, marker) {
+  const { from, to } = view.state.selection.main
+  const len = marker.length
+
+  if (from === to) {
+    // No selection — check if cursor is already inside markers to toggle off
+    const before = view.state.sliceDoc(Math.max(0, from - len), from)
+    const after = view.state.sliceDoc(from, from + len)
+    if (before === marker && after === marker) {
+      // Remove surrounding markers
+      view.dispatch({
+        changes: [
+          { from: from - len, to: from },
+          { from, to: from + len },
+        ],
+        selection: { anchor: from - len },
+      })
+    } else {
+      // Insert empty markers with cursor between them
+      const insert = marker + marker
+      view.dispatch({
+        changes: { from, to, insert },
+        selection: { anchor: from + len },
+      })
+    }
+    return true
+  }
+
+  // Has selection — check if already wrapped to toggle off
+  const selectedText = view.state.sliceDoc(from, to)
+  const beforeSel = view.state.sliceDoc(Math.max(0, from - len), from)
+  const afterSel = view.state.sliceDoc(to, to + len)
+
+  if (beforeSel === marker && afterSel === marker) {
+    // Unwrap: remove markers around selection
+    view.dispatch({
+      changes: [
+        { from: from - len, to: from },
+        { from: to, to: to + len },
+      ],
+      selection: { anchor: from - len, head: to - len },
+    })
+  } else if (selectedText.startsWith(marker) && selectedText.endsWith(marker) && selectedText.length >= len * 2) {
+    // Selection includes markers — remove them from inside
+    view.dispatch({
+      changes: { from, to, insert: selectedText.slice(len, -len) },
+      selection: { anchor: from, head: to - len * 2 },
+    })
+  } else {
+    // Wrap selection with markers
+    view.dispatch({
+      changes: { from, to, insert: marker + selectedText + marker },
+      selection: { anchor: from + len, head: to + len },
+    })
+  }
+  return true
+}
+
+// Backspace handler: if deleting * or ** removes an empty marker pair (e.g. **** → nothing, ** → nothing)
+function backspaceDeleteMarkerPair(view) {
+  const { from } = view.state.selection.main
+
+  // Check for empty bold markers: cursor inside ****
+  if (view.state.sliceDoc(from - 2, from + 2) === '****') {
+    view.dispatch({
+      changes: { from: from - 2, to: from + 2, insert: '' },
+      selection: { anchor: from - 2 },
+    })
+    return true
+  }
+
+  // Check for empty italic markers: cursor inside **
+  // But NOT if it's part of **** (bold) — that's handled above
+  const around2 = view.state.sliceDoc(Math.max(0, from - 1), from + 1)
+  if (around2 === '**') {
+    const wider = view.state.sliceDoc(Math.max(0, from - 2), from + 2)
+    // Skip if this is part of a bold marker pair
+    if (wider !== '****') {
+      view.dispatch({
+        changes: { from: from - 1, to: from + 1, insert: '' },
+        selection: { anchor: from - 1 },
+      })
+      return true
+    }
+  }
+
+  return false
+}
+
+const markdownFormattingKeymap = keymap.of([
+  { key: 'Mod-b', run: (view) => toggleMarker(view, '**') },
+  { key: 'Mod-i', run: (view) => toggleMarker(view, '*') },
+  { key: 'Backspace', run: backspaceDeleteMarkerPair },
 ])
 
 // ── Hide markdown syntax (Live Preview) ─────────────────────────────────────
@@ -608,7 +706,9 @@ export function NoteEditorCM({
         extensions: [
           history(),
           wikilinkKeymap,
-          keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
+          markdownFormattingKeymap,
+          keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, ...searchKeymap, indentWithTab]),
+          highlightSelectionMatches(),
           markdown({ base: markdownLanguage, codeLanguages: languages }),
           syntaxHighlighting(markdownHighlight),
           markdownHeadingFold,

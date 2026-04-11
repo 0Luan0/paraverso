@@ -34,7 +34,9 @@ export function parseSimpleYaml(yamlBlock) {
 
     // JSON-quoted string: "text with spaces"
     if (rawVal.startsWith('"') && rawVal.endsWith('"')) {
-      try { result[key] = JSON.parse(rawVal); continue } catch {}
+      // Intentional fallback: if JSON.parse fails (e.g. unescaped quote),
+      // drop through to the plain-string handlers below instead of throwing.
+      try { result[key] = JSON.parse(rawVal); continue } catch { /* fall through */ }
     }
 
     // Single-quoted string

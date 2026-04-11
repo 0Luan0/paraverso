@@ -2,8 +2,7 @@
  * vault/folderOps.js — Folder/notebook CRUD, move, delete, rename propagation.
  */
 
-import { el, RESERVED_DIRS, MACHINE_DIRS, sanitizeName, buildCodeSkipRanges, isInCodeBlock } from './shared.js'
-import { getTemplatesDir } from './shared.js'
+import { el, RESERVED_DIRS, MACHINE_DIRS, SYSTEM_DIRS, sanitizeName, buildCodeSkipRanges, isInCodeBlock } from './shared.js'
 import { _getAllMdPaths } from './pathUtils.js'
 
 // No default folders — notes live at vault root unless user creates folders
@@ -12,7 +11,7 @@ const CADERNOS_PADRAO = []
 export async function getNotebooks(vaultPath) {
   const entries = await el().readdir(vaultPath, { dirsOnly: true })
   const existingDirs = (entries || []).filter(e =>
-    !RESERVED_DIRS.has(e) && !MACHINE_DIRS.has(e)
+    !RESERVED_DIRS.has(e) && !MACHINE_DIRS.has(e) && !SYSTEM_DIRS.has(e)
   )
 
   if (existingDirs.length === 0) {
@@ -40,12 +39,16 @@ export async function moveNotebook(vaultPath, fromRelPath, toRelPath) {
   if (from === to) return { from, to, noop: true }
 
   const fromTop = from.split(/[/\\]/)[0]
-  if (RESERVED_DIRS.has(fromTop) || MACHINE_DIRS.has(fromTop)) throw new Error(`Pasta reservada não pode ser movida: ${fromTop}`)
+  if (RESERVED_DIRS.has(fromTop) || MACHINE_DIRS.has(fromTop) || SYSTEM_DIRS.has(fromTop)) {
+    throw new Error(`Pasta reservada não pode ser movida: ${fromTop}`)
+  }
 
   // Only check destination reserved dirs if destination is not vault root
   if (to) {
     const toTop = to.split(/[/\\]/)[0]
-    if (RESERVED_DIRS.has(toTop) || MACHINE_DIRS.has(toTop)) throw new Error(`Destino é pasta reservada: ${toTop}`)
+    if (RESERVED_DIRS.has(toTop) || MACHINE_DIRS.has(toTop) || SYSTEM_DIRS.has(toTop)) {
+      throw new Error(`Destino é pasta reservada: ${toTop}`)
+    }
   }
 
   // Templates folder: allowed to move/delete (UI handles confirmation)
@@ -102,7 +105,7 @@ export async function deleteNotebook(vaultPath, relPath) {
   if (!rel) throw new Error('Path vazio')
 
   const topSeg = rel.split(/[/\\]/)[0]
-  if (RESERVED_DIRS.has(topSeg) || MACHINE_DIRS.has(topSeg)) {
+  if (RESERVED_DIRS.has(topSeg) || MACHINE_DIRS.has(topSeg) || SYSTEM_DIRS.has(topSeg)) {
     throw new Error(`Pasta reservada não pode ser deletada: ${topSeg}`)
   }
   // Templates folder: allowed to delete (UI already shows confirmation dialog)
@@ -143,6 +146,28 @@ export async function resolveAbsolutePath(vaultPath, relPath) {
   return el().joinPath(vaultPath, ...rel.split(/[/\\]/))
 }
 
+/**
+ * Propagates a title rename by rewriting every [[OldTitle]] (and
+ * [[OldTitle|alias]]) reference across the vault.
+ *
+ * Transactional semantics (all-or-nothing):
+ *   Phase 1 — dry run. Read every candidate file and build the new
+ *             content in memory. Any read error aborts BEFORE any write.
+ *   Phase 2 — commit. Write each planned file in sequence. If any write
+ *             fails, roll back every already-written file by restoring
+ *             its original content, then throw so the caller knows.
+ *
+ * Why: the previous implementation caught errors per-file and silently
+ * continued, leaving a split state where some notes pointed to the new
+ * title and others still to the old one — broken wikilinks, duplicate
+ * graph nodes. See vaultIntegration.test.js > "rolls back all writes
+ * when one file fails" for the contract.
+ *
+ * Returns: array of absolute paths that were rewritten. Empty if the
+ * rename was a no-op or nothing matched.
+ * Throws: if the plan phase fails to read a candidate file, or if the
+ * commit phase fails mid-way. Thrown errors include rollback status.
+ */
 export async function propagateRename(vaultPath, tituloAntigo, tituloNovo) {
   if (!tituloAntigo || !tituloNovo) return []
   const oldNorm = String(tituloAntigo).normalize('NFC')
@@ -153,36 +178,67 @@ export async function propagateRename(vaultPath, tituloAntigo, tituloNovo) {
   const re = new RegExp(`\\[\\[${escaped}(\\|[^\\]]*)?\\]\\]`, 'g')
 
   const allPaths = await _getAllMdPaths(vaultPath)
-  const updated = []
+
+  // ── Phase 1: dry run ──────────────────────────────────────────────────
+  // Build a plan of { filePath, original, next } for every file that
+  // needs an update. Abort on any read failure — we can't commit safely
+  // if we don't know what's in the vault.
+  const plan = []
   for (const filePath of allPaths) {
+    let raw
     try {
-      const raw = await el().readFile(filePath)
-      if (!raw || !raw.includes(`[[${oldNorm}`)) continue
-
-      // Skip wikilinks inside code blocks (fenced ``` and inline `)
-      const skipRanges = buildCodeSkipRanges(raw)
-      re.lastIndex = 0
-      let match
-      const pieces = []
-      let lastEnd = 0
-      while ((match = re.exec(raw)) !== null) {
-        if (isInCodeBlock(match.index, skipRanges)) continue
-        pieces.push(raw.slice(lastEnd, match.index))
-        const alias = match[1] || ''
-        pieces.push(`[[${newNorm}${alias}]]`)
-        lastEnd = match.index + match[0].length
-      }
-      if (pieces.length === 0) continue // all matches were in code blocks
-      pieces.push(raw.slice(lastEnd))
-      const next = pieces.join('')
-
-      if (next !== raw) {
-        await el().writeFile(filePath, next)
-        updated.push(filePath)
-      }
+      raw = await el().readFile(filePath)
     } catch (err) {
-      console.warn('[propagateRename] falha ao processar', filePath, err?.message)
+      throw new Error(`propagateRename: falha ao ler ${filePath}: ${err?.message}`)
     }
+    if (!raw || !raw.includes(`[[${oldNorm}`)) continue
+
+    // Skip wikilinks inside code blocks (fenced ``` and inline `)
+    const skipRanges = buildCodeSkipRanges(raw)
+    re.lastIndex = 0
+    let match
+    const pieces = []
+    let lastEnd = 0
+    while ((match = re.exec(raw)) !== null) {
+      if (isInCodeBlock(match.index, skipRanges)) continue
+      pieces.push(raw.slice(lastEnd, match.index))
+      const alias = match[1] || ''
+      pieces.push(`[[${newNorm}${alias}]]`)
+      lastEnd = match.index + match[0].length
+    }
+    if (pieces.length === 0) continue // all matches were inside code blocks
+    pieces.push(raw.slice(lastEnd))
+    const next = pieces.join('')
+    if (next === raw) continue
+    plan.push({ filePath, original: raw, next })
   }
-  return updated
+
+  if (plan.length === 0) return []
+
+  // ── Phase 2: commit ───────────────────────────────────────────────────
+  // Apply each planned write. On failure, restore every already-written
+  // file from the snapshot in `plan.original`, then throw.
+  const written = []
+  try {
+    for (const entry of plan) {
+      await el().writeFile(entry.filePath, entry.next)
+      written.push(entry)
+    }
+    return plan.map(p => p.filePath)
+  } catch (commitErr) {
+    const rollbackFailures = []
+    for (const entry of written) {
+      try {
+        await el().writeFile(entry.filePath, entry.original)
+      } catch (rbErr) {
+        rollbackFailures.push({ filePath: entry.filePath, error: rbErr?.message })
+      }
+    }
+    const suffix = rollbackFailures.length > 0
+      ? ` Rollback parcial falhou em ${rollbackFailures.length} arquivo(s) — vault pode estar inconsistente: ${JSON.stringify(rollbackFailures)}`
+      : ' Rollback completo — vault restaurado ao estado original.'
+    const err = new Error(`propagateRename: falha ao escrever: ${commitErr?.message}.${suffix}`)
+    err.rollbackFailures = rollbackFailures
+    throw err
+  }
 }

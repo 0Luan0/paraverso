@@ -28,7 +28,9 @@ export function QuickSwitcher({ onClose, onAbrirNota, vaultPath }) {
           hemisphere: n.caderno === '_machine' ? 'machine' : 'human',
         }))
         setTodas(tagged.sort((a, b) => (b.editadaEm || 0) - (a.editadaEm || 0)))
-      } catch {}
+      } catch (err) {
+        console.warn('[QuickSwitcher.loadMetadata]', err?.message)
+      }
     }
     carregar()
     requestAnimationFrame(() => inputRef.current?.focus())

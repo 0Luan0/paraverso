@@ -132,7 +132,10 @@ async function importarArquivo(filePath, caderno, vaultPath, { sobrescrever = fa
           const existIdMatch = existingRaw.match(/^id:\s*(.+)$/m)
           if (existIdMatch) existingId = existIdMatch[1].trim()
         }
-      } catch {}
+      } catch {
+        // Existing file unreadable — generate a fresh ID/criadaEm below.
+        // Not fatal: worst case we lose the original metadata preservation.
+      }
     }
 
     // ── Monta frontmatter YAML Paraverso ───────────────────────────────────
@@ -227,18 +230,19 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
   const [templateSaving, setTemplateSaving]   = useState(false)
 
   useEffect(() => {
-    getCadernos().then(lista => setCadernos(lista)).catch(() => {})
+    getCadernos().then(lista => setCadernos(lista))
+      .catch(err => console.warn('[ConfigTab.loadCadernos]', err?.message))
     window.electron?.getConfig('defaultCaderno').then(v => {
       if (v) setDefaultCaderno(v)
-    }).catch(() => {})
+    }).catch(err => console.warn('[ConfigTab.getConfig.defaultCaderno]', err?.message))
     window.electron?.getConfig('templatesDir').then(v => {
       const dir = v || 'templates'
       setTemplatesDirState(dir)
       setTemplatesDir(dir)
-    }).catch(() => {})
+    }).catch(err => console.warn('[ConfigTab.getConfig.templatesDir]', err?.message))
     window.electron?.getConfig('journalCaderno').then(v => {
       setJournalCaderno(v || 'meses')
-    }).catch(() => {})
+    }).catch(err => console.warn('[ConfigTab.getConfig.journalCaderno]', err?.message))
     carregarTemplates()
   }, [])
 
@@ -247,7 +251,7 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
     if (!vaultPath) return
     window.electron?.readdir(vaultPath, { dirsOnly: true })
       .then(dirs => setTopDirs((dirs || []).filter(d => !d.startsWith('.') && d !== '_machine')))
-      .catch(() => {})
+      .catch(err => console.warn('[ConfigTab.readTopDirs]', err?.message))
   }, [vaultPath])
 
   async function salvarDefaultCaderno(nome) {
@@ -276,7 +280,11 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
 
   async function carregarTemplates() {
     if (!vaultPath) return
-    try { setTemplatesList(await getTemplatesVault(vaultPath)) } catch {}
+    try {
+      setTemplatesList(await getTemplatesVault(vaultPath))
+    } catch (err) {
+      console.warn('[ConfigTab.carregarTemplates]', err?.message)
+    }
   }
 
   async function editarTemplate(filename) {
@@ -298,7 +306,11 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
       const filePath = await el().joinPath(dir, filename)
       // Se renomeou o template, deleta o antigo
       if (templateEditando && templateEditando !== filename) {
-        try { await el().deleteFile(await el().joinPath(dir, templateEditando)) } catch {}
+        try {
+          await el().deleteFile(await el().joinPath(dir, templateEditando))
+        } catch (err) {
+          console.warn('[ConfigTab.salvarTemplate.deleteOld]', err?.message)
+        }
       }
       await el().writeFile(filePath, templateConteudo)
       await carregarTemplates()
@@ -416,9 +428,15 @@ export function ConfigTab({ dark, toggleTheme, textura, setTexturaTo }) {
             return rel.startsWith(cadernoNorm) && rel.endsWith('.md')
           })
           for (const filePath of mdFiles) {
-            try { await el().deleteFile(filePath) } catch {}
+            try {
+              await el().deleteFile(filePath)
+            } catch (err) {
+              console.warn('[ConfigTab.limparTodosOsDados.deleteFile]', filePath, err?.message)
+            }
           }
-        } catch {}
+        } catch (err) {
+          console.warn('[ConfigTab.limparTodosOsDados.cadernoScan]', cadernoDir, err?.message)
+        }
       }
       setDadosLimpos(true)
       setConfirmLimpar(false)

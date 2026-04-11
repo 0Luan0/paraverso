@@ -76,7 +76,11 @@ export function useWikilinks({
     if (saveTimer.current) {
       clearTimeout(saveTimer.current)
       saveTimer.current = null
-      try { await salvarNota(activeNoteRef.current) } catch {}
+      try {
+        await salvarNota(activeNoteRef.current)
+      } catch (err) {
+        console.warn('[useWikilinks.flushSaveBeforeCreate]', err?.message)
+      }
     }
     await createNote(titulo)
   }

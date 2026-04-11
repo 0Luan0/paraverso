@@ -3,6 +3,11 @@ const { pathToFileURL } = require('url')
 const path = require('path')
 const fs = require('fs')
 const fsp = fs.promises
+const {
+  isSafeAttachmentName,
+  resolveWithinBase,
+  isSafeExternalUrl,
+} = require('./security/pathGuard.cjs')
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -17,15 +22,27 @@ async function loadConfig() {
     const raw = await fsp.readFile(getConfigPath(), 'utf-8')
     return JSON.parse(raw)
   } catch {
+    // Missing file or parse error (rare: config.json is tiny and writes are atomic).
+    // Silent empty-object fallback is intentional for first-run UX.
     return {}
   }
 }
 
+// Atomic write: stage to a .tmp file then rename onto config.json.
+// POSIX rename is atomic, so readers never observe a half-written config.
+// Without this, fs.writeFile truncates first — a reader hitting the gap between
+// truncate and write would see an empty file and think there's no vault.
 async function saveConfig(obj) {
-  await fsp.writeFile(getConfigPath(), JSON.stringify(obj, null, 2), 'utf-8')
+  const target = getConfigPath()
+  const tmp = `${target}.tmp`
+  await fsp.writeFile(tmp, JSON.stringify(obj, null, 2), 'utf-8')
+  await fsp.rename(tmp, target)
 }
 
 // ── Config lock — serializa escritas para evitar read-modify-write race ──────
+// Invariant: every write to config.json MUST go through saveConfig() which
+// MUST be called inside configLock.then(). The only caller is config:set.
+// Reads (loadConfig, getVaultPath) are lock-free — safe because writes are atomic.
 let configLock = Promise.resolve()
 
 // ── Path validation — impede acesso fora do vault ────────────────────────────
@@ -61,6 +78,7 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,            // defense-in-depth: renderer cannot require Node modules
       webSecurity: true,
       webviewTag: true,
       preload: path.join(__dirname, 'preload.cjs'),
@@ -83,7 +101,10 @@ function createWindow() {
   // Isso evita que <a href="..."> clicados dentro do editor abram uma nova janela
   // ou naveguem para fora do app.
   win.webContents.on('will-navigate', (event, url) => {
-    const isAppUrl = url.startsWith('http://localhost') || url.startsWith('file://')
+    // Allow only the Vite dev server port and packaged file:// URLs.
+    // Any other http(s) link (obsidian://, arbitrary pasted URLs) is opened
+    // in the system browser instead of hijacking the app window.
+    const isAppUrl = url.startsWith('http://localhost:5173/') || url.startsWith('file://')
     if (!isAppUrl) {
       event.preventDefault()
       shell.openExternal(url)
@@ -91,18 +112,26 @@ function createWindow() {
   })
 }
 
-// Register attachment:// as privileged scheme before app is ready
+// Register attachment:// as privileged scheme before app is ready.
+// No bypassCSP — the scheme is allowlisted explicitly in the document CSP.
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'attachment', privileges: { secure: true, supportFetchAPI: true, bypassCSP: true } },
+  { scheme: 'attachment', privileges: { secure: true, supportFetchAPI: true } },
 ])
 
 app.whenReady().then(() => {
   // Protocol handler: attachment://filename.png → serves from vault/attachments/
+  // Hardened against path traversal: nome is validated as a plain filename,
+  // then resolved and re-anchored inside the attachments directory.
   protocol.handle('attachment', (request) => {
     const nome = decodeURIComponent(request.url.slice('attachment://'.length))
     const vaultPath = getVaultPath()
     if (!vaultPath) return new Response('No vault', { status: 404 })
-    const filePath = path.join(vaultPath, 'attachments', nome)
+    if (!isSafeAttachmentName(nome)) {
+      return new Response('Invalid attachment name', { status: 400 })
+    }
+    const attachDir = path.join(vaultPath, 'attachments')
+    const filePath = resolveWithinBase(attachDir, nome)
+    if (!filePath) return new Response('Forbidden', { status: 403 })
     return net.fetch(pathToFileURL(filePath).toString())
   })
 
@@ -476,11 +505,11 @@ function registerIpcHandlers() {
   ipcMain.handle('terminal:start', async (event, vaultPath) => {
     try {
       if (!pty) {
-        pty = require('node-pty-prebuilt-multiarch')
+        pty = require('node-pty')
       }
 
       if (ptyProcess) {
-        try { ptyProcess.kill() } catch {}
+        try { ptyProcess.kill() } catch { /* previous PTY may already be dead */ }
         ptyProcess = null
         await new Promise(r => setTimeout(r, 200))
       }
@@ -529,13 +558,13 @@ function registerIpcHandlers() {
     if (ptyProcess && (cols !== currentCols || rows !== currentRows)) {
       currentCols = cols
       currentRows = rows
-      try { ptyProcess.resize(cols, rows) } catch {}
+      try { ptyProcess.resize(cols, rows) } catch { /* PTY may have exited between dispatch and resize */ }
     }
   })
 
   ipcMain.handle('terminal:kill', () => {
     if (ptyProcess) {
-      try { ptyProcess.kill() } catch {}
+      try { ptyProcess.kill() } catch { /* PTY may already be dead — idempotent kill */ }
       ptyProcess = null
     }
   })
@@ -582,15 +611,32 @@ function registerIpcHandlers() {
     })
   })
 
-  // Scrape a URL and return cleaned article content via Readability
+  // Scrape a URL and return cleaned article content via Readability.
+  // Hardened: SSRF-safe URL allowlist, 10s timeout, 10MB response cap.
+  const SCRAPE_TIMEOUT_MS = 10_000
+  const SCRAPE_MAX_BYTES = 10 * 1024 * 1024
   ipcMain.handle('browser:scrapeUrl', async (_e, url) => {
+    if (!isSafeExternalUrl(url)) {
+      return { error: 'URL não permitida (scheme inválido, loopback ou rede privada)' }
+    }
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), SCRAPE_TIMEOUT_MS)
     try {
       const res = await fetch(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         },
+        signal: controller.signal,
+        redirect: 'follow',
       })
+      const declared = Number(res.headers.get('content-length') || 0)
+      if (declared > SCRAPE_MAX_BYTES) {
+        return { error: 'Resposta muito grande (>10MB)' }
+      }
       const html = await res.text()
+      if (html.length > SCRAPE_MAX_BYTES) {
+        return { error: 'Resposta muito grande (>10MB)' }
+      }
       const dom = new JSDOM(html, { url })
       const reader = new Readability(dom.window.document)
       const article = reader.parse()
@@ -600,7 +646,12 @@ function registerIpcHandlers() {
         excerpt: article?.excerpt || '',
       }
     } catch (err) {
+      if (err?.name === 'AbortError') {
+        return { error: 'Timeout ao buscar URL (>10s)' }
+      }
       return { error: err.message }
+    } finally {
+      clearTimeout(timer)
     }
   })
 
@@ -610,7 +661,9 @@ function registerIpcHandlers() {
   const machineDebounceTimers = new Map()
 
   ipcMain.handle('machine:watch', (event, machinePath) => {
-    if (machineWatcher) { try { machineWatcher.close() } catch {} }
+    if (machineWatcher) {
+      try { machineWatcher.close() } catch { /* previous watcher may already be closed */ }
+    }
     machineDebounceTimers.clear()
 
     try {
@@ -631,12 +684,16 @@ function registerIpcHandlers() {
           }, 300))
         }
       })
-    } catch {}
+    } catch (err) {
+      // fs.watch failed — hemisphere changes won't be pushed to renderer.
+      // Not fatal (reads still work) but user-visible as stale sidebar.
+      console.warn('[machine:watch] fs.watch failed:', err?.message)
+    }
   })
 
   ipcMain.handle('machine:unwatch', () => {
     if (machineWatcher) {
-      try { machineWatcher.close() } catch {}
+      try { machineWatcher.close() } catch { /* already closed — idempotent */ }
       machineWatcher = null
     }
   })
@@ -668,7 +725,7 @@ function registerIpcHandlers() {
                 name: entry.name.replace(/\.md$/i, ''),
                 preview: content.slice(0, 500),
               })
-            } catch {}
+            } catch { /* skip unreadable file — scan continues */ }
           }
         }
       }
@@ -699,7 +756,7 @@ function registerIpcHandlers() {
           const entries = await fsp.readdir(dir)
           const match = entries.find(e => e.normalize('NFC').toLowerCase() === base)
           if (match) resolved = path.join(dir, match)
-        } catch {}
+        } catch { /* NFC fallback readdir failed — next check reports "nota não encontrada" */ }
       }
       if (!fs.existsSync(resolved)) {
         return { error: 'Nota não encontrada: ' + notePath }
@@ -718,11 +775,17 @@ function registerIpcHandlers() {
   ipcMain.handle('attachment:save', async (_e, vaultPath, nome, bufferArray) => {
     try {
       validatePath(vaultPath)
+      if (!isSafeAttachmentName(nome)) {
+        throw new Error('nome de anexo inválido')
+      }
       const attachDir = path.join(vaultPath, 'attachments')
       if (!fs.existsSync(attachDir)) {
         await fsp.mkdir(attachDir, { recursive: true })
       }
-      const filePath = path.join(attachDir, nome)
+      const filePath = resolveWithinBase(attachDir, nome)
+      if (!filePath) {
+        throw new Error('caminho do anexo escapa do diretório attachments')
+      }
       await fsp.writeFile(filePath, Buffer.from(bufferArray))
       return { success: true, filePath }
     } catch (err) {

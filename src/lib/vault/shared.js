@@ -13,6 +13,11 @@ export const MACHINE_DIRS = new Set(['_machine'])
 // _machine was removed: it's now a normal folder with visual-only separation.
 export const RESERVED_DIRS = new Set()
 
+// System folders — created and managed by Paraverso itself (not user notebooks).
+// Hidden from the notebook sidebar AND protected from rename/move/delete, but
+// internally writable by the app (e.g. attachment:save writes into attachments/).
+export const SYSTEM_DIRS = new Set(['attachments'])
+
 // Configurable templates directory (default: 'templates'). Updated by ConfigTab.
 let configuredTemplatesDir = 'templates'
 export function setTemplatesDir(nome) { configuredTemplatesDir = nome || 'templates' }

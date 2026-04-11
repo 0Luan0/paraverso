@@ -13,6 +13,9 @@ dist-ssr
 dist-electron
 *.local
 
+# Claude Code ephemeral state
+.claude/worktrees/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

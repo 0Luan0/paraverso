@@ -53,7 +53,7 @@ export function TerminalPane({ vaultPath, onClose }) {
 
     // Fit to container
     requestAnimationFrame(() => {
-      try { fitAddon.fit() } catch {}
+      try { fitAddon.fit() } catch { /* container may have unmounted before rAF fired */ }
     })
 
     // Start PTY
@@ -79,7 +79,10 @@ export function TerminalPane({ vaultPath, onClose }) {
       try {
         fitAddon.fit()
         window.electron.terminal.resize(term.cols, term.rows)
-      } catch {}
+      } catch {
+        // ResizeObserver can fire during terminal disposal or before PTY is ready.
+        // Both paths are harmless — next resize will succeed.
+      }
     })
     resizeObserver.observe(containerRef.current)
 

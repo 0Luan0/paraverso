@@ -297,7 +297,7 @@ export function GraphTab({ dark }) {
   // Persist graph config on change (skip initial load)
   useEffect(() => {
     if (!vaultPath || !configLoadedRef.current) return
-    try { localStorage.setItem(`paraverso-graph-config:${vaultPath}`, JSON.stringify(config)) } catch {}
+    try { localStorage.setItem(`paraverso-graph-config:${vaultPath}`, JSON.stringify(config)) } catch { /* localStorage quota exceeded — preferences won't persist but graph still works */ }
   }, [config, vaultPath])
 
   const containerRef = useRef(null)
@@ -341,7 +341,7 @@ export function GraphTab({ dark }) {
   // Persist groups to vault-specific localStorage key (only after initial load)
   useEffect(() => {
     if (!gruposKeyRef.current || !gruposLoadedRef.current) return
-    try { localStorage.setItem(gruposKeyRef.current, JSON.stringify(grupos)) } catch {}
+    try { localStorage.setItem(gruposKeyRef.current, JSON.stringify(grupos)) } catch { /* localStorage quota exceeded — groups won't persist this session */ }
   }, [grupos])
 
   // Sincroniza grupos de cor com renames/moves de pasta no vault.

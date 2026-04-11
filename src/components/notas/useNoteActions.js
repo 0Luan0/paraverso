@@ -79,7 +79,7 @@ export function useNoteActions({
     // Eager-load _machine notes so drag-and-drop works even when hemisphere is collapsed
     getNotasPorCaderno('_machine')
       .then(lista => setNotesByNotebook(prev => ({ ...prev, _machine: lista })))
-      .catch(() => {})
+      .catch(err => console.warn('[useNoteActions.eagerLoadMachine]', err?.message))
   }, [vaultPath]) // eslint-disable-line
 
   // ── Load notes when active notebook changes ─────────────────────────────────
@@ -93,7 +93,7 @@ export function useNoteActions({
     if (notebook) {
       getSubfolders(notebook)
         .then(folders => { if (!cancelled) setSubfoldersByNotebook(prev => ({ ...prev, [notebook]: folders })) })
-        .catch(() => {})
+        .catch(err => console.warn('[useNoteActions.loadSubfolders]', err?.message))
     }
     return () => { cancelled = true }
   }, [activeNotebook, vaultPath]) // eslint-disable-line
@@ -315,8 +315,16 @@ export function useNoteActions({
       const reloads = []
       const affectedTops = new Set([sourceTop, targetTop].filter(Boolean))
       for (const top of affectedTops) {
-        reloads.push(getNotasPorCaderno(top).then(lista => setNotesByNotebook(prev => ({ ...prev, [top]: lista }))).catch(() => {}))
-        reloads.push(getSubfolders(top).then(folders => setSubfoldersByNotebook(prev => ({ ...prev, [top]: folders }))).catch(() => {}))
+        reloads.push(
+          getNotasPorCaderno(top)
+            .then(lista => setNotesByNotebook(prev => ({ ...prev, [top]: lista })))
+            .catch(err => console.warn('[useNoteActions.reloadNotes]', top, err?.message))
+        )
+        reloads.push(
+          getSubfolders(top)
+            .then(folders => setSubfoldersByNotebook(prev => ({ ...prev, [top]: folders })))
+            .catch(err => console.warn('[useNoteActions.reloadSubfolders]', top, err?.message))
+        )
       }
       await Promise.all(reloads)
 

@@ -26,7 +26,9 @@ export function useAutoSave({
       const nota = activeNoteRef.current
       if (nota) {
         salvarNota(nota).catch(e => console.error('[Flush save]', e))
-        if (nota.id) commitTitleIfNeeded(nota.id).catch(() => {})
+        if (nota.id) commitTitleIfNeeded(nota.id).catch(err => {
+          console.warn('[useAutoSave.flushCommitTitle]', err?.message)
+        })
       }
     }
     window.addEventListener('beforeunload', flushSave)
