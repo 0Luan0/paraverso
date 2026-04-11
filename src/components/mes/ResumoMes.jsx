@@ -62,7 +62,7 @@ function ResumoModal({ mesObj, onClose, onSave }) {
           </button>
           <button
             onClick={salvar}
-            className="text-xs bg-accent dark:bg-accent-dark text-white rounded px-3 py-1 hover:bg-accent-2 transition-colors"
+            className="btn-primary text-xs py-1"
           >
             Salvar
           </button>

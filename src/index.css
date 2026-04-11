@@ -57,12 +57,183 @@
   background-size: 28px 28px;
 }
 
+/* ── Motion tokens ──────────────────────────────────────────────────────
+   CSS custom properties so inline styles + @keyframes can use the same
+   timing. Tailwind classes use theme.transitionTimingFunction for parity. */
+:root {
+  --motion-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-spring: 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Activity bar chrome (app sidebar — always uses dark palette) */
+  --activity-bg: #181818;
+  --activity-fg-idle: #4a4a4a;
+  --activity-fg-hover: #888880;
+  --activity-fg-active: #d4cfc9;
+  --activity-indicator: rgba(255,255,255,0.25);
+  --activity-tooltip-bg: #272727;
+  --activity-tooltip-fg: #d4cfc9;
+  --activity-tooltip-border: #2a2a2a;
+}
+
 @layer components {
   /* ── Scrollbar sutil ── */
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #C8BFA8; border-radius: 4px; }
   .dark ::-webkit-scrollbar-thumb { background: #2a2a2a; }
+
+  /* ── Button system ─────────────────────────────────────────────────────
+     Three button patterns used across the app. Define once, use everywhere.
+     Compose with size utilities (text-xs, px-4, etc.) — the base class
+     handles colors, hover, active feedback, and focus ring. */
+
+  /* Primary — high emphasis. Dark-first inversion: dark fill (light mode)
+     or warm off-white fill (dark mode). Replaces the broken bg-accent +
+     text-white pattern that rendered invisibly in 7 places. */
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-weight: 500;
+    background-color: #1a1a18;
+    color: #f0ece5;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background-color var(--motion-fast),
+                transform 100ms ease-out,
+                box-shadow var(--motion-fast);
+  }
+  .btn-primary:hover:not(:disabled) { background-color: #2a2a28; }
+  .btn-primary:active:not(:disabled) { transform: scale(0.97); }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(26,26,24,0.25);
+  }
+  .dark .btn-primary {
+    background-color: #e8e4dd;
+    color: #1a1a1a;
+  }
+  .dark .btn-primary:hover:not(:disabled) { background-color: #f5f1ea; }
+  .dark .btn-primary:focus-visible {
+    box-shadow: 0 0 0 2px rgba(232,228,221,0.25);
+  }
+
+  /* Secondary — medium emphasis. Ghost with subtle border.
+     Same pattern as the existing NotasTab empty-state buttons, generalized. */
+  .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-weight: 500;
+    background-color: transparent;
+    color: #1a1a18;
+    border: 1px solid rgba(26,26,24,0.3);
+    cursor: pointer;
+    transition: background-color var(--motion-fast),
+                border-color var(--motion-fast),
+                transform 100ms ease-out;
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background-color: rgba(26,26,24,0.05);
+    border-color: rgba(26,26,24,0.45);
+  }
+  .btn-secondary:active:not(:disabled) { transform: scale(0.97); }
+  .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .dark .btn-secondary {
+    color: #e4e4e4;
+    border-color: rgba(228,228,228,0.3);
+  }
+  .dark .btn-secondary:hover:not(:disabled) {
+    background-color: rgba(228,228,228,0.05);
+    border-color: rgba(228,228,228,0.45);
+  }
+
+  /* Ghost — low emphasis. No border. For toolbar actions, icon buttons. */
+  .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.7rem;
+    border-radius: 6px;
+    font-weight: 500;
+    background-color: transparent;
+    color: #8A8478;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background-color var(--motion-fast),
+                color var(--motion-fast);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background-color: rgba(26,26,24,0.06);
+    color: #1a1a18;
+  }
+  .btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+  .dark .btn-ghost { color: #888880; }
+  .dark .btn-ghost:hover:not(:disabled) {
+    background-color: rgba(228,228,228,0.06);
+    color: #e4e4e4;
+  }
+
+  /* ── Modal animations ──────────────────────────────────────────────── */
+  .modal-backdrop {
+    animation: modal-backdrop-in var(--motion-base) forwards;
+  }
+  .modal-panel {
+    animation: modal-panel-in var(--motion-base) forwards;
+  }
+  @keyframes modal-backdrop-in {
+    from { opacity: 0; backdrop-filter: blur(0); }
+    to   { opacity: 1; backdrop-filter: blur(4px); }
+  }
+  @keyframes modal-panel-in {
+    from { opacity: 0; transform: scale(0.96) translateY(4px); }
+    to   { opacity: 1; transform: scale(1)    translateY(0); }
+  }
+
+  /* ── Focus ring utility ────────────────────────────────────────────── */
+  .ring-focus {
+    transition: box-shadow var(--motion-fast);
+  }
+  .ring-focus:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(26,26,24,0.2);
+  }
+  .dark .ring-focus:focus-visible {
+    box-shadow: 0 0 0 2px rgba(228,228,228,0.2);
+  }
+
+  /* ── Global focus-visible for text inputs ──────────────────────────────
+     Any input/textarea without an explicit outline-none focus handler
+     gets a subtle ring on keyboard focus. CodeMirror handles its own
+     focus state — this rule intentionally doesn't apply to contenteditable. */
+  input[type="text"]:focus-visible,
+  input[type="password"]:focus-visible,
+  input[type="email"]:focus-visible,
+  input[type="number"]:focus-visible,
+  input[type="search"]:focus-visible,
+  input:not([type]):focus-visible,
+  textarea:focus-visible {
+    transition: box-shadow var(--motion-fast);
+  }
+  .dark input[type="text"]:focus-visible,
+  .dark input[type="password"]:focus-visible,
+  .dark input[type="email"]:focus-visible,
+  .dark input[type="number"]:focus-visible,
+  .dark input[type="search"]:focus-visible,
+  .dark input:not([type]):focus-visible,
+  .dark textarea:focus-visible {
+    box-shadow: 0 0 0 2px rgba(228,228,228,0.12);
+  }
 
   /* ── TipTap base ── */
   .tiptap {

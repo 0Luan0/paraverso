@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Modal, ModalHeader, ModalFooter } from '../ui/Modal'
 
 const HABITOS_SUGERIDOS = [
   'Treino', 'Leitura', 'Meditação', 'Caminhada',
@@ -41,22 +42,18 @@ export function HabitoSetupModal({ habitosAtuais, onSave, onClose }) {
     onClose()
   }
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 dark:bg-black/50 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
-    >
-      <div className="bg-surface dark:bg-surface-dark rounded-lg border border-bdr dark:border-bdr-dark w-full max-w-sm mx-4 shadow-xl">
+  const headerTitle = (
+    <div>
+      <p className="font-serif text-base font-medium text-ink dark:text-ink-dark">Hábitos do mês</p>
+      <p className="text-xs text-ink-3 dark:text-ink-dark3 mt-0.5">
+        Escolha até 7 · <span className={totalSelecionados >= 7 ? 'text-accent dark:text-accent-dark font-medium' : ''}>{totalSelecionados}/7 selecionados</span>
+      </p>
+    </div>
+  )
 
-        {/* header */}
-        <div className="px-5 py-3 border-b border-bdr dark:border-bdr-dark flex items-center justify-between">
-          <div>
-            <p className="font-serif text-base font-medium text-ink dark:text-ink-dark">Hábitos do mês</p>
-            <p className="text-xs text-ink-3 dark:text-ink-dark3 mt-0.5">
-              Escolha até 7 · <span className={totalSelecionados >= 7 ? 'text-accent dark:text-accent-dark font-medium' : ''}>{totalSelecionados}/7 selecionados</span>
-            </p>
-          </div>
-        </div>
+  return (
+    <Modal open={true} onClose={onClose} size="sm">
+      <ModalHeader title={headerTitle} />
 
         {/* lista de checkboxes */}
         <div className="px-5 py-4 max-h-72 overflow-auto">
@@ -124,30 +121,25 @@ export function HabitoSetupModal({ habitosAtuais, onSave, onClose }) {
             />
             <button
               onClick={adicionarCustom}
-              className="text-xs bg-accent dark:bg-accent-dark text-white rounded-md px-3 py-1.5 hover:bg-accent-2 transition-colors"
+              className="btn-primary text-xs py-1.5"
             >
               + Add
             </button>
           </div>
         )}
 
-        {/* footer */}
-        <div className="px-5 py-3 border-t border-bdr-2 dark:border-bdr-dark2 flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            className="text-xs text-ink-3 dark:text-ink-dark3 hover:text-ink dark:hover:text-ink-dark transition-colors"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={salvar}
-            disabled={totalSelecionados === 0}
-            className="text-xs bg-accent dark:bg-accent-dark text-white rounded px-3 py-1 hover:bg-accent-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Salvar hábitos
-          </button>
-        </div>
-      </div>
-    </div>
+      <ModalFooter>
+        <button onClick={onClose} className="btn-ghost text-xs">
+          Cancelar
+        </button>
+        <button
+          onClick={salvar}
+          disabled={totalSelecionados === 0}
+          className="btn-primary text-xs py-1.5"
+        >
+          Salvar hábitos
+        </button>
+      </ModalFooter>
+    </Modal>
   )
 }

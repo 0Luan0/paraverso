@@ -276,7 +276,8 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
       buildVaultIndex()
       // Reload notes for active notebook + root notes so new files appear
       if (activeNotebook) {
-        getNotasPorCaderno(activeNotebook).then(lista => setNotes(lista)).catch(() => {})
+        getNotasPorCaderno(activeNotebook).then(lista => setNotes(lista))
+          .catch(err => console.warn('[NotasTab.reloadOnVisible]', err?.message))
       }
       actions.loadRootNotes()
     }
@@ -615,19 +616,16 @@ export function NotasTab({ textura = 'none', notaPendente, onNotaAberta, onNotaA
             )}
           </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center gap-3">
-            <p className="text-ink-3 dark:text-ink-dark3 text-sm">Nenhuma nota selecionada</p>
+          <div className="flex-1 flex flex-col items-center justify-center gap-4">
+            <div className="text-center space-y-1">
+              <p className="text-ink-2 dark:text-ink-dark2 text-sm">Nenhuma nota aberta</p>
+              <p className="text-ink-3 dark:text-ink-dark3 text-xs">Crie uma nova ou use <kbd className="px-1.5 py-0.5 rounded-soft border border-bdr dark:border-bdr-dark text-[10px] font-mono">⌘O</kbd> pra buscar</p>
+            </div>
             <div className="flex gap-2">
-              <button
-                onClick={() => createNote()}
-                className="text-sm text-accent dark:text-accent-dark border border-accent/30 dark:border-accent-dark/30 rounded-lg px-4 py-2 hover:bg-accent/5 dark:hover:bg-accent-dark/5 transition-colors"
-              >
+              <button onClick={() => createNote()} className="btn-secondary text-sm">
                 + Nova nota
               </button>
-              <button
-                onClick={createDailyNote}
-                className="text-sm text-accent dark:text-accent-dark border border-accent/30 dark:border-accent-dark/30 rounded-lg px-4 py-2 hover:bg-accent/5 dark:hover:bg-accent-dark/5 transition-colors flex items-center gap-1.5"
-              >
+              <button onClick={createDailyNote} className="btn-secondary text-sm">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="4" width="18" height="18" rx="2" />
                   <line x1="16" y1="2" x2="16" y2="6" />

@@ -3,11 +3,14 @@ paths:
   - "src/components/mes/**"
 ---
 
-# Month Tab — Protected Components
+# Month Tab — Stable Components
 
-The UI components in `src/components/mes/` are stable and protected. Do not modify them.
+The UI components in `src/components/mes/` are stable. Do not modify their
+behavior, layout, or component structure. Design system updates (token
+swaps, className migrations to shared utility classes like `.btn-primary`)
+are allowed and expected when the global design system changes.
 
-Protected files:
+Stable files:
 - `MesTab.jsx`
 - `RegistroDiario.jsx`
 - `DiaModal.jsx`
@@ -15,6 +18,19 @@ Protected files:
 - `HabitoSetupModal.jsx`
 - `MetasMes.jsx`
 - `StatBar.jsx`
+
+## What is allowed
+- Replace broken token combinations with shared utility classes
+  (e.g. swapping `bg-accent dark:bg-accent-dark text-white` for `.btn-primary`)
+- Migrate from deprecated color tokens to new semantic tokens when the
+  design system is consolidated
+- Non-visual bug fixes (state, data flow, event handlers)
+
+## What is NOT allowed without explicit approval
+- Layout restructuring (rearranging sections, changing grid dimensions)
+- Adding or removing features
+- Changing the copy/wording
+- Replacing the component architecture (e.g. split into sub-components)
 
 ## IO layer (editable)
 

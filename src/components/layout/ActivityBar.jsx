@@ -62,48 +62,45 @@ function BarButton({ label, active, onClick, children, className = '' }) {
   const [hover, setHover] = useState(false)
   const [rect, setRect] = useState(null)
 
+  // Color states mapped to the ink-dark scale (dark-first chrome).
+  // inactive → ink-dark3, hover → ink-dark2, active → ink-dark.
+  const color = active
+    ? 'var(--activity-fg-active)'
+    : hover
+      ? 'var(--activity-fg-hover)'
+      : 'var(--activity-fg-idle)'
+
   return (
     <>
       <button
         onClick={onClick}
-        onMouseEnter={e => { setRect(e.currentTarget.getBoundingClientRect()); setHover(true) }}
+        onMouseEnter={(e) => { setRect(e.currentTarget.getBoundingClientRect()); setHover(true) }}
         onMouseLeave={() => setHover(false)}
-        className={`relative flex items-center justify-center w-full ${className}`}
-        style={{
-          height: '32px',
-          color: active ? '#c8c4be' : hover ? '#888880' : '#4a4a4a',
-          background: 'transparent',
-          border: 'none',
-          cursor: 'pointer',
-          outline: 'none',
-        }}
+        className={`relative flex items-center justify-center w-full h-8 bg-transparent border-0 cursor-pointer outline-none transition-colors duration-150 ${className}`}
+        style={{ color }}
       >
         {active && (
           <div
-            className="absolute left-0"
-            style={{ width: '2.5px', height: '20px', background: 'rgba(255,255,255,0.25)', borderRadius: '0 2px 2px 0' }}
+            className="absolute left-0 w-[2.5px] h-5 rounded-r-sm"
+            style={{ background: 'var(--activity-indicator)' }}
           />
         )}
         {children}
       </button>
       {hover && rect && (
         <div
+          className="fixed pointer-events-none z-[9999] px-2 py-[3px] rounded-soft text-caption whitespace-nowrap animate-fade-in"
           style={{
-            position: 'fixed',
             left: '40px',
             top: rect.top + rect.height / 2,
             transform: 'translateY(-50%)',
-            background: '#2a2a2a',
-            color: '#e8e8e8',
-            fontSize: '11px',
-            padding: '3px 8px',
-            borderRadius: '4px',
-            whiteSpace: 'nowrap',
-            pointerEvents: 'none',
-            zIndex: 9999,
-            border: '1px solid #3a3a3a',
+            background: 'var(--activity-tooltip-bg)',
+            color: 'var(--activity-tooltip-fg)',
+            border: '1px solid var(--activity-tooltip-border)',
           }}
-        >{label}</div>
+        >
+          {label}
+        </div>
       )}
     </>
   )
@@ -133,10 +130,9 @@ export default function ActivityBar({ abaAtiva, onAbaChange, onNotaDia, terminal
 
   return (
     <div
-      className="flex flex-col items-center flex-shrink-0 select-none"
+      className="flex flex-col items-center flex-shrink-0 select-none w-8"
       style={{
-        width: '32px',
-        background: '#181818',
+        background: 'var(--activity-bg)',
         paddingTop: isElectron ? '36px' : '12px',
       }}
     >

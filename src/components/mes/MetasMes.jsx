@@ -187,7 +187,7 @@ export function MetasMes({ mesObj, onUpdate }) {
           />
           <button
             onClick={adicionarCategoriaFn}
-            className="text-xs bg-accent dark:bg-accent-dark text-white rounded px-2 py-1.5"
+            className="btn-primary text-xs py-1.5 px-3"
           >
             OK
           </button>
