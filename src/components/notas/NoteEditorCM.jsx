@@ -12,60 +12,99 @@ import { useVault } from '../../contexts/VaultContext'
 import { gerarNomeAnexo, extDeMimeType } from '../../lib/attachments'
 
 // ── Markdown syntax highlighting ────────────────────────────────────────────
+// Warm editorial rainbow for heading hierarchy. Six distinct colors so you
+// never lose track of the level at a glance. H1–H3 use Georgia serif for
+// editorial weight; H4–H6 stay sans for sub-sections.
+//
+// Color logic:
+//   H1 amber      — warmest, highest emphasis
+//   H2 pink       — unified with wikilink accent
+//   H3 teal       — unified with hashtag accent
+//   H4 lavender   — cool accent, cross-pollinates with warm H1/H2
+//   H5 muted blue — cooler still, lower emphasis
+//   H6 warm gray  — lowest emphasis, barely standing out
 const markdownHighlight = HighlightStyle.define([
-  { tag: tags.heading1, fontSize: '1.8em', fontWeight: '700', lineHeight: '1.3', color: '#F9A834' },
-  { tag: tags.heading2, fontSize: '1.4em', fontWeight: '600', lineHeight: '1.4', color: '#46C0B1' },
-  { tag: tags.heading3, fontSize: '1.2em', fontWeight: '600', color: '#e4e4e4' },
-  { tag: tags.heading4, fontSize: '1.1em', fontWeight: '600', color: '#888888' },
-  { tag: tags.heading5, fontSize: '1.05em', fontWeight: '600', color: '#888888' },
-  { tag: tags.heading6, fontSize: '1em', fontWeight: '600', color: '#888888' },
-  { tag: tags.strong, fontWeight: '700' },
-  { tag: tags.emphasis, fontStyle: 'italic' },
-  { tag: tags.strikethrough, textDecoration: 'line-through', opacity: '0.6' },
-  { tag: tags.link, color: '#E75383' },
-  { tag: tags.url, color: '#a0a0a0', opacity: '0.7' },
-  { tag: tags.monospace, fontFamily: 'ui-monospace, monospace', background: 'rgba(128,128,128,0.12)', borderRadius: '3px', padding: '1px 4px' },
-  { tag: tags.quote, fontStyle: 'italic', opacity: '0.75' },
-  { tag: tags.processingInstruction, opacity: '0.35' },
-  { tag: tags.meta, opacity: '0.35' },
+  { tag: tags.heading1, fontFamily: 'Georgia, Cambria, serif', fontSize: '1.9em', fontWeight: '700', lineHeight: '1.25', color: '#F9A834' },
+  { tag: tags.heading2, fontFamily: 'Georgia, Cambria, serif', fontSize: '1.5em',  fontWeight: '700', lineHeight: '1.3',  color: '#E75383' },
+  { tag: tags.heading3, fontFamily: 'Georgia, Cambria, serif', fontSize: '1.25em', fontWeight: '600', lineHeight: '1.35', color: '#46C0B1' },
+  { tag: tags.heading4, fontSize: '1.1em',  fontWeight: '600', lineHeight: '1.4', color: '#A78BFA' },
+  { tag: tags.heading5, fontSize: '1em',    fontWeight: '600', lineHeight: '1.4', color: '#8FA4C6' },
+  { tag: tags.heading6, fontSize: '0.95em', fontWeight: '600', lineHeight: '1.4', color: '#9a948a' },
+  // Bold is visibly brighter than body text so it actually reads as emphasis.
+  { tag: tags.strong, fontWeight: '700', color: '#f5f0e6' },
+  // Italic picks up a warm gold — the Obsidian-style yellow italic pattern.
+  { tag: tags.emphasis, fontStyle: 'italic', color: '#F4D19B' },
+  { tag: tags.strikethrough, textDecoration: 'line-through', opacity: '0.55' },
+  { tag: tags.link, color: '#ef5350' },
+  { tag: tags.url, color: '#9a948a', opacity: '0.7' },
+  // Inline code: pink pill that echoes the wikilink accent.
+  { tag: tags.monospace, fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace', fontSize: '0.88em', background: 'rgba(231,83,131,0.12)', color: '#EB7A95', borderRadius: '4px', padding: '1px 6px', border: '1px solid rgba(231,83,131,0.22)' },
+  { tag: tags.quote, fontStyle: 'italic', color: '#c8c0b0' },
+  { tag: tags.processingInstruction, opacity: '0.32' },
+  { tag: tags.meta, opacity: '0.32' },
 ])
 
 // ── Tema base (Obsidian-like) ───────────────────────────────────────────────
 const baseTheme = EditorView.theme({
   '&': { height: '100%', fontSize: '15px', fontFamily: 'inherit', background: 'transparent' },
-  '.cm-content': { padding: '24px 32px', caretColor: '#e4e4e4', fontFamily: 'inherit', lineHeight: '1.7', color: '#d4cfc9' },
+  '.cm-content': { padding: '24px 32px 24px 12px', caretColor: '#e4e4e4', fontFamily: 'inherit', lineHeight: '1.75', color: '#d4cfc9' },
   '.cm-focused': { outline: 'none' },
   '.cm-line': { padding: '0' },
   '.cm-scroller': { overflow: 'auto', height: '100%' },
   '.cm-placeholder': { color: 'rgba(128,128,128,0.5)', fontStyle: 'italic' },
-  '.cm-activeLine': { background: 'rgba(255,255,255,0.02)' },
-  '&.cm-focused .cm-activeLine': { background: 'rgba(255,255,255,0.03)' },
-  '.cm-gutters': { background: 'transparent', border: 'none', paddingLeft: '8px' },
-  '.cm-foldGutter': { width: '16px' },
+  '.cm-activeLine': { background: 'rgba(255,255,255,0.025)' },
+  '&.cm-focused .cm-activeLine': { background: 'rgba(255,255,255,0.04)' },
+
+  // ── Gutters (fold + line number) ─────────────────────────────────────
+  // Flush against content (no extra left padding) and the fold arrow is
+  // invisible by default — only appears on hover over the editor line
+  // itself. Removes the "detached floating arrow" look.
+  '.cm-gutters': { background: 'transparent', border: 'none', paddingLeft: '0' },
+  '.cm-foldGutter': { width: '14px' },
   '.cm-foldGutter .cm-gutterElement': {
     cursor: 'pointer',
-    color: 'rgba(232,164,74,0.5)',
-    fontSize: '14px',
-    lineHeight: '1.7',
+    color: 'rgba(249,168,52,0.0)',       // invisible by default
+    fontSize: '11px',
+    lineHeight: '1.75',
     textAlign: 'center',
-    transition: 'color 0.15s',
+    transition: 'color 150ms ease',
     padding: '0',
   },
-  '.cm-foldGutter .cm-gutterElement:hover': { color: '#e4e4e4' },
+  '&:hover .cm-foldGutter .cm-gutterElement': { color: 'rgba(249,168,52,0.35)' },
+  '.cm-foldGutter .cm-gutterElement:hover': { color: '#F9A834' },
+
+  // Placeholder shown in place of folded content — warm amber chip
   '.cm-foldPlaceholder': {
-    background: 'rgba(212,146,74,0.1)',
-    border: '1px solid rgba(212,146,74,0.25)',
-    borderRadius: '3px',
-    color: '#e4e4e4',
-    padding: '0 6px',
+    background: 'rgba(249,168,52,0.1)',
+    border: '1px solid rgba(249,168,52,0.28)',
+    borderRadius: '4px',
+    color: '#F9A834',
+    padding: '0 8px',
     margin: '0 4px',
     cursor: 'pointer',
-    fontSize: '12px',
+    fontSize: '11px',
+    fontFamily: 'ui-monospace, monospace',
+    transition: 'background 150ms ease',
   },
-  '.cm-wikilink': { color: '#E75383', cursor: 'pointer', borderBottom: '1px solid currentColor', opacity: '0.85' },
-  '.cm-wikilink:hover': { opacity: '1' },
-  '.cm-hashtag': { color: '#46C0B1', opacity: '0.7' },
-  '.cm-blockquote': { borderLeft: '3px solid #444', paddingLeft: '12px', color: '#a0a0a0', fontStyle: 'italic' },
+  '.cm-foldPlaceholder:hover': { background: 'rgba(249,168,52,0.18)' },
+
+  // ── Inline decorations ──────────────────────────────────────────────
+  '.cm-wikilink': { color: '#ef5350', cursor: 'pointer', borderBottom: '1px solid rgba(239,83,80,0.45)', transition: 'color 120ms, border-color 120ms' },
+  '.cm-wikilink:hover': { color: '#ff6b6b', borderBottomColor: '#ff6b6b' },
+  '.cm-hashtag': { color: '#46C0B1', background: 'rgba(70,192,177,0.1)', borderRadius: '4px', padding: '0 4px', fontSize: '0.92em' },
+  '.cm-highlight': { background: 'rgba(244,209,123,0.18)', color: '#F4D19B', borderRadius: '3px', padding: '0 2px' },
+
+  // ── Blockquote — warm amber left bar + tinted bg + legible italic ────
+  '.cm-blockquote': {
+    borderLeft: '3px solid #F9A834',
+    background: 'rgba(249,168,52,0.04)',
+    paddingLeft: '14px',
+    paddingRight: '6px',
+    color: '#c8c0b0',
+    fontStyle: 'italic',
+  },
+
+  // ── Autocomplete popover ────────────────────────────────────────────
   '.cm-tooltip-autocomplete': { background: '#221E16 !important', border: '1px solid #3A3428 !important', borderRadius: '8px !important', boxShadow: '0 8px 24px rgba(0,0,0,0.15) !important', overflow: 'hidden' },
   '.cm-tooltip-autocomplete ul': { maxHeight: '240px' },
   '.cm-tooltip-autocomplete ul li': { padding: '6px 12px !important', fontSize: '13px', color: '#EDE8DF' },
@@ -404,10 +443,18 @@ const hideMarkdownPlugin = ViewPlugin.fromClass(class {
 }, { decorations: v => v.decorations })
 
 // ── HR visual widget ────────────────────────────────────────────────────────
+// Warm gradient divider — fades in from the edges to a soft amber center.
+// Visible enough to act as a real section break without screaming.
 class HRWidget extends WidgetType {
   toDOM() {
     const hr = document.createElement('hr')
-    hr.style.cssText = 'border:none;border-top:1px solid rgba(255,255,255,0.15);margin:8px 0;display:block;'
+    hr.style.cssText = [
+      'border:none',
+      'height:1px',
+      'background:linear-gradient(90deg, transparent, rgba(249,168,52,0.35) 20%, rgba(249,168,52,0.35) 80%, transparent)',
+      'margin:20px 0',
+      'display:block',
+    ].join(';')
     return hr
   }
   ignoreEvent() { return false }
@@ -480,6 +527,69 @@ const taskPlugin = ViewPlugin.fromClass(class {
         const checkTo = checkFrom + m[1].length
         const state = m[1] === '[x]' ? 'done' : m[1] === '[-]' ? 'notdone' : 'empty'
         builder.add(checkFrom, checkTo, Decoration.replace({ widget: new CheckboxWidget(state, checkFrom, checkTo) }))
+      }
+    }
+    return builder.finish()
+  }
+}, { decorations: v => v.decorations })
+
+// ── Highlight (==text==) decoration ─────────────────────────────────────────
+// CommonMark-style highlight. Paraverso mirrors the Obsidian convention:
+// `==something==` renders with a warm gold background and the `==` markers
+// are hidden (live preview). When the cursor sits on the same line the
+// markers become visible again so you can edit them.
+const highlightPlugin = ViewPlugin.fromClass(class {
+  decorations
+  constructor(view) { this.decorations = this.build(view) }
+  update(update) {
+    if (update.docChanged || update.viewportChanged || update.selectionSet) {
+      this.decorations = this.build(update.view)
+    }
+  }
+  build(view) {
+    const builder = new RangeSetBuilder()
+    const doc = view.state.doc.toString()
+    const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number
+
+    // Collect code regions to skip
+    const skipRanges = []
+    const fenceRe = /```[\s\S]*?```/g
+    let fm
+    while ((fm = fenceRe.exec(doc)) !== null) {
+      skipRanges.push([fm.index, fm.index + fm[0].length])
+    }
+    const inlineRe = /`[^`\n]+`/g
+    let im
+    while ((im = inlineRe.exec(doc)) !== null) {
+      skipRanges.push([im.index, im.index + im[0].length])
+    }
+    const isInSkip = (pos) => {
+      for (const [s, e] of skipRanges) {
+        if (pos >= s && pos < e) return true
+      }
+      return false
+    }
+
+    // Match ==text== on a single line, non-greedy, no empty matches.
+    // Decorations MUST be added in strict from-order for RangeSetBuilder.
+    const hideMark = Decoration.replace({})
+    const re = /==([^=\n]+)==/g
+    let m
+    while ((m = re.exec(doc)) !== null) {
+      const start = m.index
+      const end = start + m[0].length
+      if (isInSkip(start)) continue
+
+      const lineOfMatch = view.state.doc.lineAt(start).number
+      if (lineOfMatch === cursorLine) {
+        // Cursor on this line — show everything, just tint the content.
+        builder.add(start, end, Decoration.mark({ class: 'cm-highlight' }))
+      } else {
+        // Hide the opening ==, tint the content, hide the closing ==.
+        // Order matters: each add must have `from` >= previous `from`.
+        builder.add(start, start + 2, hideMark)
+        builder.add(start + 2, end - 2, Decoration.mark({ class: 'cm-highlight' }))
+        builder.add(end - 2, end, hideMark)
       }
     }
     return builder.finish()
@@ -714,11 +824,16 @@ export function NoteEditorCM({
           markdownHeadingFold,
           codeFolding(),
           foldGutter({
-            openText: '▸',
-            closedText: '▾',
+            // CM6 semantics: openText = shown when region is OPEN (click to close),
+            // closedText = shown when region is CLOSED (click to open).
+            // The previous values were swapped, making the arrows visually
+            // contradict the fold state. Fixed here.
+            openText: '▾',
+            closedText: '▸',
           }),
           wikilinkPlugin,
           hashtagPlugin,
+          highlightPlugin,
           hideMarkdownPlugin,
           hrPlugin,
           taskPlugin,

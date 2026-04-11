@@ -363,17 +363,17 @@
 
   /* ── Wikilinks [[nota]] ── */
   .wikilink {
-    color: #E75383;
-    background: rgba(231,83,131,0.08);
+    color: #ef5350;
+    background: rgba(239,83,80,0.08);
     border-radius: 3px;
     padding: 0 3px;
     cursor: pointer;
     transition: background 0.15s;
     white-space: nowrap;
   }
-  .wikilink:hover { background: rgba(231,83,131,0.18); }
-  .dark .wikilink { color: #E75383; background: rgba(231,83,131,0.12); }
-  .dark .wikilink:hover { background: rgba(231,83,131,0.22); }
+  .wikilink:hover { background: rgba(239,83,80,0.18); }
+  .dark .wikilink { color: #ef5350; background: rgba(239,83,80,0.12); }
+  .dark .wikilink:hover { background: rgba(239,83,80,0.22); }
 
   /* ── Hashtags #tag ── */
   .hashtag {
